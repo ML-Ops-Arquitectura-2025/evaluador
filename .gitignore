@@ -1,0 +1,89 @@
+# Git ignore para proyecto MLOps
+# Archivos del evaluador de modelos climáticos
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# AWS
+.aws/
+aws-credentials
+
+# Model files (suelen ser grandes)
+*.pkl
+*.joblib
+*.h5
+*.pb
+models/
+checkpoints/
+
+# Data files (pueden ser grandes o sensibles)
+data/
+datasets/
+*.csv
+*.parquet
+*.json
+!examples/*.csv
+!examples/*.json
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
+temp/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Lambda deployment
+package/
+lambda_function.zip
+*.zip
+
+# Docker
+.dockerignore

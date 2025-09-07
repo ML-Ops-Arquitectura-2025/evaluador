@@ -1,0 +1,10 @@
+{
+  "model_path": "s3://mi-bucket-clima/modelos/modelo_ski_v2.pkl",
+  "data_path": "s3://mi-bucket-clima/datasets/evaluacion_semanal.csv",
+  "target_col": "temperature",
+  "feature_cols": ["humidity", "wind_speed", "pressure", "altitude"],
+  "primary_metric": "mae",
+  "threshold": 2.0,
+  "metrics_local_path": "/tmp/metrics.json",
+  "metrics_s3_uri": "s3://mi-bucket-clima/metricas/metrics_2025-09-07.json"
+}

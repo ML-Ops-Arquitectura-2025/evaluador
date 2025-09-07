@@ -1,57 +1,52 @@
 @echo off
-REM Script de prueba local para Windows PowerShell
-REM Genera datos de prueba y ejecuta evaluaciones de ejemplo
+REM Script de prueba simple para el evaluador
 
-echo 🌨️  MLOps - Evaluador de Modelos Climáticos
-echo =============================================
+echo 🌨️ Evaluador de Modelos ML - Centro de Ski
+echo ==========================================
 
-REM Verificar que Python esté instalado
+REM Verificar Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ Python no encontrado. Instalar Python 3.11+
+    echo ❌ Python no encontrado
     exit /b 1
 )
 
 echo ✅ Python encontrado
-python --version
-
-REM Crear entorno virtual si no existe
-if not exist "venv" (
-    echo 📦 Creando entorno virtual...
-    python -m venv venv
-)
-
-REM Activar entorno virtual
-echo 🔧 Activando entorno virtual...
-call venv\Scripts\activate.bat
 
 REM Instalar dependencias
-echo 📥 Instalando dependencias...
+echo � Instalando dependencias...
 pip install -r requirements.txt
 
 REM Generar datos de prueba
 echo 🎲 Generando datos de prueba...
-python examples\generate_test_data.py
+python -c "
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+import joblib
 
-REM Ejecutar evaluaciones de ejemplo
-echo.
-echo 🧪 PRUEBA 1: Evaluación básica local
-echo ======================================
-python evaluate.py --model_path examples\model.pkl --data_path examples\test_data.csv --target_col temperature --threshold 2.0
+np.random.seed(42)
+data = pd.DataFrame({
+    'humedad': np.random.uniform(40, 90, 100),
+    'viento': np.random.uniform(5, 25, 100),
+    'presion': np.random.uniform(990, 1020, 100),
+})
 
-echo.
-echo 🧪 PRUEBA 2: Evaluación con todas las opciones
-echo ==============================================
-python evaluate.py --model_path examples\model.pkl --data_path examples\test_data.csv --target_col temperature --feature_cols "humidity,wind_speed,pressure,altitude,hour,month,cloud_cover" --primary_metric rmse --threshold 3.0 --metrics_local_path examples\metrics_test.json --verbose
+data['temperatura'] = -0.1 * data['humedad'] - 0.2 * data['viento'] + 0.05 * data['presion'] + np.random.normal(0, 1.5, 100)
 
-echo.
-echo 🧪 PRUEBA 3: Evaluación con umbral bajo (debería activar reentrenamiento)
-echo ========================================================================
-python evaluate.py --model_path examples\model.pkl --data_path examples\test_data.csv --target_col temperature --primary_metric mae --threshold 0.5 --verbose
+X = data[['humedad', 'viento', 'presion']]
+y = data['temperatura']
+model = RandomForestRegressor(n_estimators=10, random_state=42)
+model.fit(X, y)
 
-echo.
-echo ✅ Pruebas completadas!
-echo 📋 Revisar archivos generados en examples/
-echo 📊 Métricas guardadas en examples/metrics_test.json
+data.to_csv('datos_prueba.csv', index=False)
+joblib.dump(model, 'modelo_prueba.pkl')
+print('✅ Datos generados')
+"
 
+REM Probar evaluador
+echo 🧪 Probando evaluador...
+python evaluate.py --model modelo_prueba.pkl --data datos_prueba.csv --target temperatura --threshold 1.5
+
+echo ✅ Prueba completada!
 pause

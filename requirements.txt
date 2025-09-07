@@ -1,16 +1,8 @@
-# Requerimientos para el Evaluador de Modelo de Predicción Climática
-# Compatible con Python 3.11+
-
-# Core ML/Data Science
+# Dependencias para el evaluador de modelos ML
 pandas>=2.0.0
 numpy>=1.24.0
 scikit-learn>=1.3.0
 joblib>=1.3.0
 
-# AWS Integration
+# AWS (opcional - solo si usas S3)
 boto3>=1.26.0
-botocore>=1.29.0
-
-# Standard library enhancements (incluidas por si hay problemas de compatibilidad)
-# Estas suelen venir con Python pero las especificamos por seguridad en Lambda
-typing-extensions>=4.5.0

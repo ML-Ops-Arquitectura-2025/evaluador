@@ -17,8 +17,9 @@ Un sistema MLOps automatizado y completo en Python que monitorea, evalúa y reen
 ```
 evaluador2/
 ├── main.py                    # Orquestador principal del sistema MLOps
+├── api_client.py             # 🌐 Cliente para Open-Meteo API
 ├── models/
-│   └── model.py              # Modelo Random Forest con métodos MLOps
+│   └── model.py              # Modelo Random Forest con métodos MLOps y API
 ├── src/
 │   ├── data_monitor.py       # Monitoreo de archivos con detección de completitud
 │   ├── model_evaluator.py    # Evaluación de performance y decisiones de reentrenamiento
@@ -30,7 +31,9 @@ evaluador2/
 ├── config/
 │   └── config.yaml          # Configuración del sistema
 ├── logs/                    # Logs del sistema (auto-generados)
-└── requirements.txt         # Dependencias Python
+├── requirements.txt         # Dependencias Python
+├── API_INTEGRATION.md       # 📚 Documentación detallada de API
+└── README.md               # Este archivo
 ```
 
 ## 🚀 Instalación Rápida
@@ -45,6 +48,13 @@ cd evaluador
 ```bash
 pip install -r requirements.txt
 ```
+
+**Dependencias principales:**
+- `pandas`, `numpy`: Manipulación de datos
+- `scikit-learn`: Machine Learning
+- `watchdog`: Monitoreo de archivos
+- `PyYAML`: Configuración
+- `requests`: **Cliente HTTP para Open-Meteo API**
 
 ### 3. Ejecutar el sistema
 ```bash
@@ -120,6 +130,123 @@ El sistema proporciona logging completo con emojis para facilitar el seguimiento
 - Velocidad del viento, presión atmosférica
 - Radiación solar, cobertura nubosa
 - Precipitación, profundidad de nieve (para predicción de nevadas)
+
+## 🌐 Integración con Open-Meteo API
+
+El sistema incluye integración completa con la API de Open-Meteo para obtener datos climáticos reales en tiempo real.
+
+### 🚀 Características de la API
+
+- ✅ **Conexión directa**: directo a Open-Meteo
+- ✅ **Datos reales**: Información meteorológica actualizada
+- ✅ **Cobertura global**: Cualquier ubicación del mundo
+- ✅ **Datos completos**: 7 días de pronóstico horario
+- ✅ **Múltiples variables**: Temperatura, humedad, viento, presión, etc.
+- ✅ **Integración automática**: Compatible con sistema MLOps existente
+
+### 📊 Datos Disponibles
+
+La API obtiene automáticamente:
+- **temperature_2m**: Temperatura a 2 metros (°C)
+- **dew_point_2m**: Punto de rocío (°C)
+- **relative_humidity_2m**: Humedad relativa (%)
+- **wind_speed_10m**: Velocidad del viento (km/h)
+- **pressure_msl**: Presión atmosférica (hPa)
+- **cloud_cover**: Cobertura nubosa (%)
+- **shortwave_radiation**: Radiación solar (W/m²)
+
+### 🔧 Uso de la API
+
+#### **1. Sistema principal con menú**
+```bash
+python main.py
+# Seleccionar opción 2: "Obtener datos desde Open-Meteo API"
+# O opción 3: "Ejecutar análisis completo con Open-Meteo API"
+```
+
+#### **2. Uso programático**
+```python
+from models.model import ClimatePredictor
+
+# Crear modelo
+modelo = ClimatePredictor()
+
+# Obtener datos de Berlin (default)
+df = modelo.load_data_from_api()
+
+# O especificar otra ubicación
+df = modelo.load_data_from_api(
+    latitude=-34.61,  # Buenos Aires
+    longitude=-58.38,
+    save_to_file="datos_bsas.csv"
+)
+
+# Entrenar modelo con datos reales
+modelo.train(df)
+predictions = modelo.predict(df.tail(24))
+```
+
+#### **3. Cliente API directo**
+```python
+from api_client import get_climate_data_from_api
+
+# Obtener datos directamente
+df = get_climate_data_from_api(
+    latitude=40.4,    # Madrid
+    longitude=-3.7
+)
+```
+
+### 🌍 Ubicaciones Populares
+
+```python
+# Principales ciudades (ejemplos)
+ciudades = {
+    "Berlin": (52.52, 13.41),
+    "Buenos Aires": (-34.61, -58.38),
+    "Madrid": (40.4, -3.7),
+    "Ciudad de México": (19.43, -99.13),
+    "Londres": (51.51, -0.13),
+    "Nueva York": (40.71, -74.01),
+    "Tokio": (35.68, 139.69),
+    "Sídney": (-33.87, 151.21)
+}
+
+# Usar cualquier ciudad
+lat, lon = ciudades["Buenos Aires"]
+df = modelo.load_data_from_api(latitude=lat, longitude=lon)
+```
+
+### 🔄 Integración con MLOps
+
+La API se integra perfectamente con el sistema MLOps:
+
+1. **Datos automáticos**: Opción 2 del menú obtiene datos y los guarda en `data/input/`
+2. **Monitoreo automático**: El sistema detecta y procesa los nuevos datos API
+3. **Reentrenamiento**: Si la performance baja, se reentrena con datos actualizados
+4. **Versionado**: Modelos entrenados con datos API se versionan automáticamente
+
+### 📁 Archivos de API
+
+- **`api_client.py`**: Cliente principal para Open-Meteo
+- **`API_INTEGRATION.md`**: Documentación detallada
+
+### 🛠️ Troubleshooting API
+
+#### **Error: No se puede conectar**
+```bash
+# Verificar conectividad
+python api_client.py
+```
+
+#### **Campos sintéticos**
+Si ves advertencias sobre "campos sintéticos", significa que algunos datos opcionales no están disponibles en Open-Meteo y se generan valores realistas automáticamente.
+
+#### **Timeout**
+Para ubicaciones remotas o conexiones lentas:
+```python
+df = modelo.load_data_from_api(timeout=60)  # 60 segundos
+```
 
 ## 🧪 Testing y Simulación
 

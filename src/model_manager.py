@@ -23,12 +23,31 @@ class ModelManager:
             json.dump(history, f, indent=2)
 
     def get_best_model(self):
-        with open(self.metrics_file, 'r') as f:
-            history = json.load(f)
-        if not history:
+        """Obtener el mejor modelo del historial, o el más reciente si no hay historial."""
+        try:
+            with open(self.metrics_file, 'r') as f:
+                history = json.load(f)
+            if not history:
+                return self.get_latest_model()
+            best = max(history, key=lambda x: x['metrics']['r2'])
+            return best['model_path']
+        except FileNotFoundError:
+            return self.get_latest_model()
+    
+    def get_latest_model(self):
+        """Obtener el modelo más reciente basado en timestamp en el nombre del archivo."""
+        import os
+        import glob
+        
+        model_pattern = os.path.join(self.models_dir, 'model_*.joblib')
+        model_files = glob.glob(model_pattern)
+        
+        if not model_files:
             return None
-        best = max(history, key=lambda x: x['metrics']['r2'])
-        return best['model_path']
+        
+        # Ordenar por fecha en el nombre del archivo (más reciente primero)
+        model_files.sort(reverse=True)
+        return model_files[0]
 
     def rollback(self):
         with open(self.metrics_file, 'r') as f:

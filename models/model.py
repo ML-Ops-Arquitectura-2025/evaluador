@@ -796,6 +796,24 @@ def main():
         predictor = ClimatePredictor(target_variable=target_variable, random_state=42)
         results = predictor.run_complete_pipeline(output_file)
         
+        # GUARDAR EL MODELO Y REGISTRARLO
+        model_filename = f'model_{timestamp}.joblib'
+        model_path = os.path.join('models', model_filename)
+        predictor.save_model(model_path)
+        print(f"Model saved to '{model_path}'")
+        
+        # Registrar en historial de métricas para MLOps
+        try:
+            import sys
+            sys.path.append('src')
+            from model_manager import ModelManager
+            
+            model_manager = ModelManager()
+            model_manager.save_model_with_metrics(model_path, results['model_metrics'])
+            print(f"Model registered in MLOps system with metrics: MAE={results['model_metrics']['mae']:.4f}")
+        except Exception as e:
+            print(f"Warning: Could not register model in MLOps system: {str(e)}")
+        
         # ÚNICO archivo de resultados: guardar en output para monitoreo
         results_file = os.path.join(output_dir, f'model_results_{timestamp}.csv')
         

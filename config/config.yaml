@@ -1,0 +1,11 @@
+# Configuración principal para el sistema MLOps local de predicción climática
+
+target_variable: temperature_2m  # Cambiar a la variable que usa tu modelo avanzado
+performance_thresholds:
+  mae: 0.15
+  r2: 0.75
+monitoring:
+  watch_directory: data/output
+  check_interval: 300  # segundos
+training:
+  retrain_threshold_mae: 0.20

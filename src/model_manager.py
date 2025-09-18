@@ -39,7 +39,7 @@ class ModelManager:
         import os
         import glob
         
-        model_pattern = os.path.join(self.models_dir, 'model_*.joblib')
+        model_pattern = os.path.join(self.model_dir, 'model_*.joblib')
         model_files = glob.glob(model_pattern)
         
         if not model_files:

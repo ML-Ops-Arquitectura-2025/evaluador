@@ -760,10 +760,13 @@ def main():
     # Directorio de salida para MLOps pipeline (ruta absoluta) - ÚNICO LUGAR de salida
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.join(project_root, 'data', 'output')
+    input_dir = os.path.join(project_root, 'data', 'input')
     
-    # Crear directorio de salida si no existe
+    # Crear directorios si no existen
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    if not os.path.exists(input_dir):
+        os.makedirs(input_dir)
     
     try:
         # Generar o cargar datos
@@ -787,14 +790,14 @@ def main():
         # Generar timestamp único para esta ejecución
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # ÚNICO archivo de datos: guardar en output para MLOps
-        output_file = os.path.join(output_dir, f'climate_data_{timestamp}.csv')
-        sample_data.to_csv(output_file, index=False)
-        print(f"Data saved to '{output_file}' (sera detectado por el pipeline MLOps)")
+        # ÚNICO archivo de datos: guardar en input para procesamiento
+        input_file = os.path.join(project_root, 'data', 'input', f'climate_data_{timestamp}.csv')
+        sample_data.to_csv(input_file, index=False)
+        print(f"Data saved to '{input_file}' (sera detectado por el pipeline MLOps)")
         
-        # Initialize and run the predictor usando el archivo en output
+        # Initialize and run the predictor usando el archivo en input
         predictor = ClimatePredictor(target_variable=target_variable, random_state=42)
-        results = predictor.run_complete_pipeline(output_file)
+        results = predictor.run_complete_pipeline(input_file)
         
         # GUARDAR EL MODELO Y REGISTRARLO
         model_filename = f'model_{timestamp}.joblib'
@@ -809,7 +812,7 @@ def main():
             from model_manager import ModelManager
             
             model_manager = ModelManager()
-            model_manager.save_model_with_metrics(model_path, results['model_metrics'])
+            model_manager.save_metrics(model_path, results['model_metrics'])
             print(f"Model registered in MLOps system with metrics: MAE={results['model_metrics']['mae']:.4f}")
         except Exception as e:
             print(f"Warning: Could not register model in MLOps system: {str(e)}")
@@ -832,6 +835,36 @@ def main():
         
         results_df.to_csv(results_file, index=False)
         print(f"Model results saved to '{results_file}' (sera monitoreado por MLOps)")
+        
+        # MOSTRAR RESUMEN DETALLADO DE RESULTADOS POR CONSOLA
+        print(f"\n{'='*70}")
+        print("RESUMEN DETALLADO DE RESULTADOS DEL MODELO")
+        print(f"{'='*70}")
+        print(f"Variable objetivo: {target_variable}")
+        print(f"Timestamp: {timestamp}")
+        print(f"Archivo de datos: {input_file}")
+        print(f"Modelo guardado en: {model_path}")
+        print(f"Resultados guardados en: {results_file}")
+        
+        print(f"\nMETRICAS DEL MODELO:")
+        print(f"   • MAE (Error Absoluto Medio): {results['model_metrics']['mae']:.4f}")
+        print(f"   • RMSE (Raiz del Error Cuadratico Medio): {results['model_metrics']['rmse']:.4f}")
+        print(f"   • R2 (Coeficiente de Determinacion): {results['model_metrics']['r2']:.4f}")
+        print(f"   • MAE Baseline: {results['baseline_mae']:.4f}")
+        
+        # Calcular mejora
+        if results['baseline_mae'] > 0:
+            mejora_mae = ((results['baseline_mae'] - results['model_metrics']['mae']) / results['baseline_mae']) * 100
+            print(f"   • Mejora sobre Baseline: {mejora_mae:.2f}%")
+            if mejora_mae > 0:
+                print("   [OK] El modelo supera al baseline!")
+            else:
+                print("   [WARNING] El modelo esta por debajo del baseline")
+        
+        print(f"\nINFORMACION DEL DATASET:")
+        print(f"   • Numero de caracteristicas: {results['n_features']}")
+        print(f"   • Filas de datos: {results['data_shape'][0]}")
+        print(f"   • Columnas totales: {results['data_shape'][1]}")
         
         print(f"\n{'='*60}")
         print("PIPELINE COMPLETED SUCCESSFULLY!")

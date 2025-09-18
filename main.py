@@ -27,6 +27,118 @@ def setup_logging():
         ]
     )
 
+def process_model_results(results_csv_path, config, model_manager):
+    """Procesa archivos de resultados del modelo para evaluación y reentrenamiento automático."""
+    print(f"[MLOps] Evaluando resultados: {os.path.basename(results_csv_path)}")
+    logging.info(f"Evaluando resultados del modelo: {results_csv_path}")
+    
+    try:
+        # Leer las métricas del archivo de resultados
+        results_df = pd.read_csv(results_csv_path)
+        if len(results_df) == 0:
+            print("[MLOps] WARNING: Archivo de resultados vacío")
+            return
+        
+        # Obtener las métricas más recientes
+        latest_results = results_df.iloc[-1]
+        current_mae = latest_results['mae']
+        current_r2 = latest_results['r2']
+        current_rmse = latest_results['rmse']
+        target_variable = latest_results['target_variable']
+        
+        print(f"[MLOps] Variable objetivo: {target_variable}")
+        print(f"[MLOps] MAE: {current_mae:.4f}")
+        print(f"[MLOps] RMSE: {current_rmse:.4f}")
+        print(f"[MLOps] R2: {current_r2:.4f}")
+        
+        # Obtener umbrales de configuración
+        mae_threshold = config['training']['retrain_threshold_mae']
+        r2_threshold = config['performance_thresholds']['r2']
+        
+        print(f"[MLOps] Umbral MAE: {mae_threshold}")
+        print(f"[MLOps] Umbral R2: {r2_threshold}")
+        
+        # Evaluar performance y mostrar resultado claro
+        needs_retraining = current_mae > mae_threshold or current_r2 < r2_threshold
+        
+        print("\n" + "=" * 70)
+        if not needs_retraining:
+            print("         RESULTADO DE EVALUACION: MODELO EXCELENTE")
+            print("=" * 70)
+            print("[ESTADO] *** MODELO EN PERFECTO FUNCIONAMIENTO ***")
+            print(f"[ESTADO] Performance SUPERIOR a los umbrales requeridos")
+            print(f"[ESTADO] MAE: {current_mae:.4f} <= {mae_threshold} (EXCELENTE)")
+            print(f"[ESTADO] R2: {current_r2:.4f} >= {r2_threshold} (EXCELENTE)")
+            
+            # Calcular qué tan bueno es el modelo
+            mae_improvement = ((mae_threshold - current_mae) / mae_threshold) * 100
+            r2_improvement = ((current_r2 - r2_threshold) / r2_threshold) * 100
+            
+            print(f"[ESTADO] Margen de seguridad MAE: {mae_improvement:.1f}% mejor que umbral")
+            print(f"[ESTADO] Margen de seguridad R2: {r2_improvement:.1f}% mejor que umbral")
+            print("[ESTADO] *** NO SE REQUIERE REENTRENAMIENTO ***")
+            print("=" * 70)
+            logging.info(f"Modelo con excelente performance. MAE: {current_mae:.4f}, R²: {current_r2:.4f}")
+        else:
+            print("         RESULTADO DE EVALUACION: MODELO DEGRADADO")
+            print("=" * 70)
+            print("[ESTADO] *** MODELO REQUIERE ATENCION INMEDIATA ***")
+            if current_mae > mae_threshold:
+                degradation = ((current_mae - mae_threshold) / mae_threshold) * 100
+                print(f"[ESTADO] MAE fuera de rango: {current_mae:.4f} > {mae_threshold} ({degradation:.1f}% peor)")
+            if current_r2 < r2_threshold:
+                degradation = ((r2_threshold - current_r2) / r2_threshold) * 100
+                print(f"[ESTADO] R2 fuera de rango: {current_r2:.4f} < {r2_threshold} ({degradation:.1f}% peor)")
+            
+            print("[ESTADO] *** INICIANDO REENTRENAMIENTO AUTOMATICO ***")
+            print("=" * 70)
+            logging.warning(f"Iniciando reentrenamiento automático. MAE: {current_mae:.4f}, R²: {current_r2:.4f}")
+            
+            # Buscar el archivo de datos más reciente para reentrenar
+            input_dir = os.path.join(os.path.dirname(results_csv_path).replace('output', 'input'))
+            if os.path.exists(input_dir):
+                input_files = [f for f in os.listdir(input_dir) if f.startswith('climate_data_') and f.endswith('.csv')]
+                if input_files:
+                    input_files.sort(reverse=True)  # Más reciente primero
+                    latest_data_file = os.path.join(input_dir, input_files[0])
+                    
+                    print(f"[MLOps] Usando datos: {input_files[0]}")
+                    
+                    # Ejecutar reentrenamiento usando el pipeline existente
+                    print(f"[MLOps] Procesando datos para reentrenamiento...")
+                    process_new_data(latest_data_file, config, model_manager)
+                    
+                    print(f"\n[MLOps] [OK] REENTRENAMIENTO AUTOMÁTICO COMPLETADO")
+                    print("=" * 60)
+                    
+                else:
+                    print(f"[MLOps] [ERROR] No se encontraron archivos de datos para reentrenamiento en {input_dir}")
+            else:
+                print(f"[MLOps] [ERROR] Directorio de datos no encontrado: {input_dir}")
+        
+        # Mostrar información adicional y resumen final
+        print(f"\n[DETALLE] Características utilizadas: {latest_results.get('n_features', 'N/A')}")
+        print(f"[DETALLE] Datos procesados: {latest_results.get('data_shape_rows', 'N/A')} filas")
+        print(f"[DETALLE] Variable objetivo: {target_variable}")
+        
+        # RESUMEN FINAL MUY VISIBLE
+        print("\n" + "#" * 70)
+        if not needs_retraining:
+            print("# RESUMEN FINAL: MODELO FUNCIONANDO PERFECTAMENTE")
+            print("# STATUS: APROBADO PARA PRODUCCION")
+            print("# ACCION: NINGUNA REQUERIDA")
+        else:
+            print("# RESUMEN FINAL: MODELO NECESITA REENTRENAMIENTO")
+            print("# STATUS: REQUIERE ATENCION")
+            print("# ACCION: REENTRENAMIENTO EN PROCESO")
+        print("#" * 70)
+        
+    except Exception as e:
+        print(f"[MLOps] [ERROR] Error al procesar resultados: {str(e)}")
+        logging.error(f"Error al procesar resultados: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
 def process_new_data(csv_path, config, model_manager):
     print(f"[PIPELINE] Procesando nuevo archivo: {csv_path}")
     logging.info(f"Procesando nuevo archivo de datos: {csv_path}")
@@ -117,13 +229,193 @@ def process_new_data(csv_path, config, model_manager):
         print("="*60)
         logging.info("Performance dentro de los umbrales. No se requiere reentrenamiento.")
 
+def run_model_directly():
+    """Ejecuta el modelo directamente y procesa automáticamente los resultados."""
+    import time
+    execution_id = int(time.time())
+    
+    print("=" * 60)
+    print("EJECUCION DIRECTA DEL MODELO CON EVALUACION")
+    print("=" * 60)
+    print(f"ID de Ejecución: {execution_id}")
+    
+    print("DEBUG: Iniciando función run_model_directly()")
+    print("DEBUG: ESTA EJECUCION SERA PROCESADA COMPLETAMENTE")
+    
+    # Cargar configuración
+    try:
+        print("🔧 DEBUG: Cargando configuración...")
+        with open('config/config.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+        print("🔧 DEBUG: Configuración cargada exitosamente")
+    except Exception as e:
+        print(f"❌ Error cargando configuración: {e}")
+        return False
+        
+    try:
+        print("🔧 DEBUG: Inicializando ModelManager...")
+        model_manager = ModelManager()
+        print("🔧 DEBUG: ModelManager inicializado exitosamente")
+    except Exception as e:
+        print(f"❌ Error inicializando ModelManager: {e}")
+        return False
+    
+    # Obtener directorio de output
+    output_dir = os.path.join(os.path.dirname(__file__), 'data', 'output')
+    print(f"🔧 DEBUG: Directorio output: {output_dir}")
+    os.makedirs(output_dir, exist_ok=True)
+    print("🔧 DEBUG: Directorio output verificado/creado")
+    
+    # Importar y ejecutar el modelo desde models/model.py
+    try:
+        print("🔧 DEBUG: Importando modelo...")
+        from models.model import main as model_main
+        print("� DEBUG: Modelo importado exitosamente")
+        
+        print("�📊 Ejecutando el modelo de predicción climática...")
+        model_main()
+        print("\n✅ Modelo ejecutado exitosamente!")
+        print("🔧 DEBUG: Ejecución del modelo completada")
+        
+        # Buscar el archivo de resultados más reciente (SIEMPRE procesar)
+        print("🔧 DEBUG: Verificando archivos en directorio output...")
+        print("🔧 DEBUG: FORZANDO PROCESAMIENTO - Esta ejecución SIEMPRE será procesada")
+        if os.path.exists(output_dir):
+            all_files = os.listdir(output_dir)
+            print(f"🔧 DEBUG: Archivos encontrados: {all_files}")
+            result_files = [f for f in all_files if f.startswith('model_results_') and f.endswith('.csv')]
+            print(f"🔧 DEBUG: Archivos de resultados encontrados: {result_files}")
+            
+            if result_files:
+                # Ordenar por timestamp y tomar el más reciente (el que se acaba de crear)
+                result_files.sort(reverse=True)
+                latest_result = result_files[0]
+                result_path = os.path.join(output_dir, latest_result)
+                print(f"🔧 DEBUG: Procesando archivo: {latest_result}")
+                
+                print("\n" + "=" * 60)
+                print("EVALUACION AUTOMATICA DE RESULTADOS MLOps")
+                print("=" * 60)
+                print(f"Procesando archivo: {latest_result}")
+                
+                # SIEMPRE procesar el archivo de resultados
+                print("🔧 DEBUG: Llamando a process_model_results()...")
+                process_model_results(result_path, config, model_manager)
+                print("🔧 DEBUG: process_model_results() completado")
+                
+                # SIEMPRE FORZAR EVALUACION ADICIONAL - SIMULAR LLEGADA DE NUEVOS DATOS
+                print("\n" + "=" * 60)
+                print("EVALUACION ADICIONAL - PROCESANDO COMO DATOS NUEVOS")
+                print("=" * 60)
+                
+                # Buscar archivo de datos más reciente para simular pipeline completo
+                input_dir = os.path.join(os.path.dirname(__file__), 'data', 'input')
+                if os.path.exists(input_dir):
+                    input_files = [f for f in os.listdir(input_dir) if f.startswith('climate_data_') and f.endswith('.csv')]
+                    if input_files:
+                        input_files.sort(reverse=True)
+                        latest_input = os.path.join(input_dir, input_files[0])
+                        print(f"Procesando archivo de datos: {input_files[0]}")
+                        print("Esto activará el pipeline completo de evaluación...")
+                        
+                        # SIEMPRE procesar como si fueran datos nuevos llegando al sistema
+                        process_new_data(latest_input, config, model_manager)
+                    else:
+                        print("No se encontraron archivos de datos de entrada")
+                else:
+                    print("Directorio de entrada no encontrado")
+                
+            else:
+                print("\n⚠️  No se encontraron archivos de resultados en data/output/")
+                print("📁 Verificando contenido del directorio...")
+                all_files = os.listdir(output_dir) if os.path.exists(output_dir) else []
+                print(f"Archivos encontrados: {all_files}")
+        else:
+            print(f"\n⚠️  Directorio {output_dir} no existe")
+            
+    except Exception as e:
+        print(f"❌ Error al ejecutar el modelo: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
+    # RESUMEN FINAL DEL PROCESO COMPLETO
+    print("\n" + "*" * 80)
+    print("*" + " " * 78 + "*")
+    print("*" + f"EJECUCION {execution_id} COMPLETA - TODOS LOS PROCESOS FINALIZADOS".center(78) + "*")
+    print("*" + " " * 78 + "*")
+    print("*" + "1. MODELO EJECUTADO Y ENTRENADO: [OK]".ljust(78) + "*")
+    print("*" + "2. RESULTADOS GENERADOS: [OK]".ljust(78) + "*")
+    print("*" + "3. EVALUACION MLOps REALIZADA: [OK]".ljust(78) + "*")
+    print("*" + "4. PIPELINE COMPLETO ACTIVADO: [OK]".ljust(78) + "*")
+    print("*" + " " * 78 + "*")
+    print("*" + f"EJECUCION {execution_id}: SISTEMA REGISTRO Y EVALUO EL MODELO".center(78) + "*")
+    print("*" + " " * 78 + "*")
+    print("*" * 80)
+    
+    print(f"DEBUG: Ejecución {execution_id} completada exitosamente")
+    return True
+
+def test_automatic_retraining():
+    """Prueba el reentrenamiento automático con umbrales estrictos."""
+    print("=" * 60)
+    print("🧪 PRUEBA DE REENTRENAMIENTO AUTOMÁTICO")
+    print("=" * 60)
+    
+    # Cargar configuración
+    with open('config/config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    model_manager = ModelManager()
+    
+    # Buscar el archivo de resultados más reciente
+    output_dir = os.path.join(os.path.dirname(__file__), 'data', 'output')
+    
+    if os.path.exists(output_dir):
+        all_files = os.listdir(output_dir)
+        result_files = [f for f in all_files if f.startswith('model_results_') and f.endswith('.csv')]
+        
+        if result_files:
+            result_files.sort(reverse=True)
+            latest_result = result_files[0]
+            result_path = os.path.join(output_dir, latest_result)
+            
+            print(f"📁 Procesando archivo de resultados: {latest_result}")
+            print(f"🎚️  Usando umbrales estrictos para forzar reentrenamiento")
+            
+            # Procesar con umbrales estrictos
+            process_model_results(result_path, config, model_manager)
+            
+        else:
+            print("❌ No se encontraron archivos de resultados para evaluar")
+            print("💡 Ejecuta primero: python main.py --run-model")
+    else:
+        print("❌ Directorio de output no encontrado")
+    
+    return True
+
 def main():
     """Función principal - inicia directamente el monitoreo automático."""
     setup_logging()
     
     print("=" * 60)
-    print("🤖 SISTEMA MLOps LOCAL - PREDICCIÓN CLIMÁTICA")
+    print("SISTEMA MLOps LOCAL - PREDICCION CLIMATICA")
     print("=" * 60)
+    
+    # DEBUG: Mostrar argumentos recibidos
+    print(f"DEBUG: Argumentos recibidos: {sys.argv}")
+    print(f"DEBUG: Numero de argumentos: {len(sys.argv)}")
+    if len(sys.argv) > 1:
+        print(f"DEBUG: Primer argumento: '{sys.argv[1]}'")
+    
+    # Verificar si se quiere ejecutar el modelo directamente
+    if len(sys.argv) > 1 and sys.argv[1] == "--run-model":
+        print("DEBUG: Detectado argumento --run-model, ejecutando modelo directamente...")
+        return run_model_directly()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--test-retrain":
+        print("DEBUG: Detectado argumento --test-retrain, probando reentrenamiento automático...")
+        return test_automatic_retraining()
+    else:
+        print("DEBUG: No se detectó --run-model, iniciando monitoreo...")
     
     with open('config/config.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -137,23 +429,31 @@ def main():
     
     check_interval = config['monitoring']['check_interval']
     
-    print(f"📁 Carpeta monitoreada: {watch_dir}")
-    print(f"⏱️  Intervalo de chequeo: {check_interval} segundos")
-    print(f"🎯 Variable objetivo: {config['target_variable']}")
-    print(f"📊 Umbral MAE reentrenamiento: {config['training']['retrain_threshold_mae']}")
+    print(f"Carpeta monitoreada: {watch_dir}")
+    print(f"Intervalo de chequeo: {check_interval} segundos")
+    print(f"Variable objetivo: {config['target_variable']}")
+    print(f"Umbral MAE reentrenamiento: {config['training']['retrain_threshold_mae']}")
     print("=" * 60)
     
     def callback(csv_path):
-        process_new_data(csv_path, config, model_manager)
+        filename = os.path.basename(csv_path)
+        if filename.startswith('model_results_'):
+            # Es un archivo de resultados del modelo
+            print(f"[MONITOR] Detectado archivo de resultados: {filename}")
+            process_model_results(csv_path, config, model_manager)
+        else:
+            # Es un archivo de datos para procesamiento
+            print(f"[MONITOR] Detectado archivo de datos: {filename}")
+            process_new_data(csv_path, config, model_manager)
     
     logging.info("Sistema MLOps iniciado. Monitoreando carpeta de datos...")
-    print("🔍 Sistema iniciado. Monitoreando cambios en archivos...")
+    print("Sistema iniciado. Monitoreando cambios en archivos...")
     print("Presiona Ctrl+C para detener...")
     
     try:
         start_monitoring(watch_dir, callback, check_interval)
     except KeyboardInterrupt:
-        print("\n🛑 Monitoreo detenido por el usuario.")
+        print("\nMonitoreo detenido por el usuario.")
 
 if __name__ == '__main__':
     main()

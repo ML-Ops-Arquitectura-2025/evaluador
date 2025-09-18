@@ -11,14 +11,13 @@ class DataChangeHandler(FileSystemEventHandler):
     def should_process_file(self, file_path):
         """Determinar si el archivo debe ser procesado por el pipeline MLOps"""
         filename = os.path.basename(file_path)
-        # Solo procesar archivos de datos climáticos, no archivos de resultados/métricas
+        # Procesar archivos de resultados del modelo para evaluación MLOps
         if filename.startswith('model_results_'):
-            
-            return False
+            return True
         if filename.startswith('climate_data_') or filename == 'climate_data.csv':
             return True
-        # Procesar otros CSV que no sean archivos de resultados
-        return not filename.startswith('model_') and filename.endswith('.csv')
+        # Procesar otros CSV que no sean archivos de configuración
+        return not filename.startswith('config_') and filename.endswith('.csv')
     
     def wait_for_file_complete(self, file_path, timeout=10):
         """Esperar a que el archivo esté completamente escrito"""
@@ -73,8 +72,21 @@ def start_monitoring(watch_directory, callback, check_interval=300):
     # Crear handler para reutilizar la lógica de filtrado
     event_handler = DataChangeHandler(callback)
     
+    # Procesar archivos existentes al iniciar
+    print(f"[Watcher] Verificando archivos existentes...")
+    if os.path.exists(watch_directory):
+        for filename in os.listdir(watch_directory):
+            if filename.endswith('.csv'):
+                file_path = os.path.join(watch_directory, filename)
+                if event_handler.should_process_file(file_path):
+                    print(f"[Watcher] 📁 Archivo existente encontrado: {file_path}")
+                    if event_handler.wait_for_file_complete(file_path):
+                        print(f"[Watcher] ✅ Procesando archivo existente")
+                        callback(file_path)
+                    else:
+                        print(f"[Watcher] ⚠️ Archivo no disponible: {file_path}")
         
-    # Iniciar monitoreo de nuevos archivos únicamente
+    # Iniciar monitoreo de nuevos archivos
     observer = Observer()
     observer.schedule(event_handler, watch_directory, recursive=False)
     observer.start()

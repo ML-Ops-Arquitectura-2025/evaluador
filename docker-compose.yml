@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  mlops-climate-predictor:
+    build: .
+    container_name: climate-mlops-system
+    restart: unless-stopped
+    environment:
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_KEY=${AWS_SECRET_KEY}
+      - AWS_BUCKET=${AWS_BUCKET:-ml-ops-datos-prediccion-clima-uadec22025-ml}
+      - AWS_REGION=${AWS_REGION:-us-east-2}
+      - PYTHONPATH=/app
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./models/saved:/app/models/saved
+      - ./models/metrics_history.json:/app/models/metrics_history.json
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import models.model; print('Health OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

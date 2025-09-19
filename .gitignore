@@ -1,3 +1,6 @@
+# AWS credentials and environment files
+.env
+
 # Python
 __pycache__/
 *.py[cod]

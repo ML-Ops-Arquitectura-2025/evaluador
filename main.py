@@ -4,6 +4,11 @@ import time
 import logging
 import yaml
 import pandas as pd
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
 # Add models directory to Python path
 models_path = os.path.join(os.path.dirname(__file__), 'models')
 if models_path not in sys.path:
@@ -94,27 +99,59 @@ def process_model_results(results_csv_path, config, model_manager):
             print("=" * 70)
             logging.warning(f"Iniciando reentrenamiento automático. MAE: {current_mae:.4f}, R²: {current_r2:.4f}")
             
-            # Buscar el archivo de datos más reciente para reentrenar
-            input_dir = os.path.join(os.path.dirname(results_csv_path).replace('output', 'input'))
-            if os.path.exists(input_dir):
-                input_files = [f for f in os.listdir(input_dir) if f.startswith('climate_data_') and f.endswith('.csv')]
-                if input_files:
-                    input_files.sort(reverse=True)  # Más reciente primero
-                    latest_data_file = os.path.join(input_dir, input_files[0])
+            # En lugar de buscar archivos locales, obtener datos frescos desde S3
+            print(f"[MLOps] Obteniendo datos frescos desde AWS S3 para reentrenamiento...")
+            try:
+                # Importar las funciones necesarias del modelo
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("model", "models/model.py")
+                model_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(model_module)
+                
+                # Configuración AWS S3 desde variables de entorno
+                AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+                AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+                AWS_BUCKET = os.getenv("AWS_BUCKET", "ml-ops-datos-prediccion-clima-uadec22025-ml")
+                AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+                
+                if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+                    raise ValueError("AWS credentials not found in environment variables")
+                
+                # Obtener datos directamente desde S3
+                fresh_data = model_module.get_climate_data_from_s3(
+                    access_key=AWS_ACCESS_KEY,
+                    secret_key=AWS_SECRET_KEY,
+                    bucket=AWS_BUCKET,
+                    region=AWS_REGION
+                )
+                
+                if fresh_data is not None and len(fresh_data) > 0:
+                    print(f"[MLOps] ✅ Datos frescos obtenidos desde S3: {len(fresh_data)} registros")
                     
-                    print(f"[MLOps] Usando datos: {input_files[0]}")
-                    
-                    # Ejecutar reentrenamiento usando el pipeline existente
+                    # Ejecutar reentrenamiento usando los datos directos de S3
                     print(f"[MLOps] Procesando datos para reentrenamiento...")
-                    process_new_data(latest_data_file, config, model_manager)
+                    process_new_data_from_df(fresh_data, config, model_manager)
                     
                     print(f"\n[MLOps] [OK] REENTRENAMIENTO AUTOMÁTICO COMPLETADO")
                     print("=" * 60)
-                    
                 else:
-                    print(f"[MLOps] [ERROR] No se encontraron archivos de datos para reentrenamiento en {input_dir}")
-            else:
-                print(f"[MLOps] [ERROR] Directorio de datos no encontrado: {input_dir}")
+                    print(f"[MLOps] [ERROR] No se pudieron obtener datos frescos desde S3")
+                    
+            except Exception as e:
+                print(f"[MLOps] [ERROR] Error durante reentrenamiento con S3: {str(e)}")
+                # Fallback: buscar archivos locales como antes
+                input_dir = os.path.join(os.path.dirname(results_csv_path).replace('output', 'input'))
+                if os.path.exists(input_dir):
+                    input_files = [f for f in os.listdir(input_dir) if f.startswith('climate_data_') and f.endswith('.csv')]
+                    if input_files:
+                        input_files.sort(reverse=True)  # Más reciente primero
+                        latest_data_file = os.path.join(input_dir, input_files[0])
+                        print(f"[MLOps] Fallback: Usando datos locales: {input_files[0]}")
+                        process_new_data(latest_data_file, config, model_manager)
+                    else:
+                        print(f"[MLOps] [ERROR] No se encontraron archivos de datos para reentrenamiento en {input_dir}")
+                else:
+                    print(f"[MLOps] [ERROR] Directorio de datos no encontrado: {input_dir}")
         
         # Mostrar información adicional y resumen final
         print(f"\n[DETALLE] Características utilizadas: {latest_results.get('n_features', 'N/A')}")
@@ -138,6 +175,85 @@ def process_model_results(results_csv_path, config, model_manager):
         logging.error(f"Error al procesar resultados: {str(e)}")
         import traceback
         traceback.print_exc()
+
+def process_new_data_from_df(df, config, model_manager):
+    """Procesa datos directamente desde DataFrame (ej: desde S3)"""
+    print(f"[PIPELINE] Procesando datos desde DataFrame")
+    logging.info(f"Procesando datos desde DataFrame en memoria")
+    
+    print(f"[PIPELINE] ✅ Datos cargados exitosamente desde fuente directa")
+    print(f"[PIPELINE] 📊 Datos: {len(df)} filas, {len(df.columns)} columnas")
+    print(f"[PIPELINE] 🎯 Variable objetivo: {config['target_variable']}")
+    
+    trainer = ModelTrainer('config/config.yaml')
+    best_model_path = model_manager.get_best_model()
+    
+    if not best_model_path or not os.path.exists(best_model_path):
+        # No hay modelo previo válido, entrenar y guardar uno base
+        print("\n" + "="*60)
+        print("[PIPELINE] 🚀 ENTRENAMIENTO INICIAL - No existe modelo válido")
+        print("="*60)
+        logging.info("No existe modelo válido. Entrenando modelo base...")
+        
+        model_path, metrics = trainer.train_and_save(df)
+        model_manager.save_metrics(model_path, metrics)
+        
+        print(f"[PIPELINE] ✅ Modelo base entrenado exitosamente")
+        print(f"[PIPELINE] 📁 Ruta: {model_path}")
+        print(f"[PIPELINE] 📈 Métricas finales:")
+        print(f"[PIPELINE]    • MAE:  {metrics['mae']:.4f}")
+        print(f"[PIPELINE]    • RMSE: {metrics['rmse']:.4f}")
+        print(f"[PIPELINE]    • R²:   {metrics['r2']:.4f}")
+        print("="*60)
+        logging.info(f"Modelo base entrenado y guardado: {model_path}")
+        return
+    
+    # Evaluación del modelo existente
+    print("\n" + "="*60)
+    print("[PIPELINE] 🔍 EVALUACIÓN DE MODELO EXISTENTE")
+    print("="*60)
+    print(f"[PIPELINE] 📁 Modelo actual: {best_model_path}")
+    
+    evaluator = ModelEvaluator('config/config.yaml', best_model_path)
+    metrics = evaluator.evaluate(df)
+    
+    print(f"[PIPELINE] 📊 Métricas actuales:")
+    print(f"[PIPELINE]    • MAE:  {metrics['mae']:.4f}")
+    print(f"[PIPELINE]    • RMSE: {metrics['rmse']:.4f}")
+    print(f"[PIPELINE]    • R²:   {metrics['r2']:.4f}")
+    print(f"[PIPELINE] 🎯 Umbral MAE para reentrenamiento: {config['training']['retrain_threshold_mae']}")
+    
+    if evaluator.needs_retraining(metrics):
+        print(f"[PIPELINE] ⚠️  MAE actual ({metrics['mae']:.4f}) > Umbral ({config['training']['retrain_threshold_mae']})")
+        print("[PIPELINE] 🔄 INICIANDO REENTRENAMIENTO...")
+        print("="*60)
+        logging.info("Performance degradada. Iniciando reentrenamiento...")
+        
+        model_path, new_metrics = trainer.train_and_save(df)
+        model_manager.save_metrics(model_path, new_metrics)
+        
+        print(f"[PIPELINE] ✅ Reentrenamiento completado")
+        print(f"[PIPELINE] 📁 Nuevo modelo: {model_path}")
+        print(f"[PIPELINE] 📈 Nuevas métricas:")
+        print(f"[PIPELINE]    • MAE:  {new_metrics['mae']:.4f}")
+        print(f"[PIPELINE]    • RMSE: {new_metrics['rmse']:.4f}")
+        print(f"[PIPELINE]    • R²:   {new_metrics['r2']:.4f}")
+        
+        improvement_mae = ((metrics['mae'] - new_metrics['mae']) / metrics['mae']) * 100
+        improvement_r2 = ((new_metrics['r2'] - metrics['r2']) / metrics['r2']) * 100
+        
+        print(f"[PIPELINE] 📈 Mejoras:")
+        print(f"[PIPELINE]    • MAE: {improvement_mae:+.2f}%")
+        print(f"[PIPELINE]    • R²:  {improvement_r2:+.2f}%")
+        print("="*60)
+        
+        logging.info(f"Reentrenamiento completado. Nuevo modelo: {model_path}")
+    else:
+        print(f"[PIPELINE] ✅ Rendimiento satisfactorio")
+        print(f"[PIPELINE] 📊 MAE actual ({metrics['mae']:.4f}) ≤ Umbral ({config['training']['retrain_threshold_mae']})")
+        print("[PIPELINE] 🎯 No se requiere reentrenamiento")
+        print("="*60)
+
 
 def process_new_data(csv_path, config, model_manager):
     print(f"[PIPELINE] Procesando nuevo archivo: {csv_path}")

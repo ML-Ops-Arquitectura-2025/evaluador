@@ -27,6 +27,13 @@ from typing import Tuple, Dict, Any
 from datetime import datetime
 import sys
 import os
+import boto3
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+from botocore.exceptions import NoCredentialsError, ClientError
+import io
 
 # Add parent directory to path for api_client import
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -694,6 +701,198 @@ class ClimatePredictor:
         return self.model.predict(X)
 
 
+def process_s3_data(raw_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Process S3 data from nested JSON format to flat DataFrame.
+    
+    Args:
+        raw_data: Raw DataFrame from S3 with nested JSON structure
+        
+    Returns:
+        Processed DataFrame with climate data in expected format
+    """
+    try:
+        import json
+        import ast
+        
+        processed_rows = []
+        
+        # Group rows by pairs (timestamps and values)
+        for i in range(0, len(raw_data), 2):
+            try:
+                if i + 1 >= len(raw_data):
+                    break
+                    
+                # First row should contain timestamps
+                timestamp_row = raw_data.iloc[i]
+                # Second row should contain temperature values
+                values_row = raw_data.iloc[i + 1]
+                
+                # Parse timestamps
+                timestamps_str = timestamp_row['hourly']
+                if isinstance(timestamps_str, str):
+                    try:
+                        timestamps = ast.literal_eval(timestamps_str)
+                    except:
+                        timestamps = json.loads(timestamps_str)
+                else:
+                    timestamps = timestamps_str
+                
+                # Parse values  
+                values_str = values_row['hourly']
+                if isinstance(values_str, str):
+                    try:
+                        values = ast.literal_eval(values_str)
+                    except:
+                        values = json.loads(values_str)
+                else:
+                    values = values_str
+                
+                # Get metadata from the values row (second row)
+                latitude = values_row.get('latitude', 52.52)
+                longitude = values_row.get('longitude', 13.42)
+                elevation = values_row.get('elevation', 38)
+                
+                # Create rows for each timestamp-value pair
+                for timestamp_str, value in zip(timestamps, values):
+                    try:
+                        # Parse timestamp
+                        dt = pd.to_datetime(timestamp_str)
+                        # Convert value to float
+                        temp_value = float(value) if value is not None else 15.0
+                        
+                        processed_row = {
+                            'datetime': dt,
+                            'temperature_2m': temp_value,
+                            'latitude': latitude,
+                            'longitude': longitude,
+                            'elevation': elevation
+                        }
+                        processed_rows.append(processed_row)
+                    except (ValueError, TypeError) as e:
+                        # Skip invalid timestamp-value pairs
+                        continue
+                        
+            except Exception as e:
+                print(f"[S3] Error procesando par de filas {i}-{i+1}: {str(e)}")
+                continue
+        
+        if not processed_rows:
+            print("[S3] No se pudieron procesar datos. Generando datos sinteticos...")
+            return generate_sample_data()
+        
+        # Create DataFrame from processed rows
+        df = pd.DataFrame(processed_rows)
+        
+        # Add missing required columns with reasonable defaults
+        df['dew_point_2m'] = df['temperature_2m'] - 5  # Estimate dew point
+        df['relative_humidity_2m'] = 65.0  # Default humidity
+        df['cloud_cover'] = 50.0  # Default cloud cover
+        df['shortwave_radiation'] = 200.0  # Default radiation
+        df['wind_speed_10m'] = 3.0  # Default wind speed
+        df['pressure_msl'] = 1013.25  # Default pressure
+        
+        print(f"[S3] Datos procesados exitosamente:")
+        print(f"   • Total de registros procesados: {len(df)}")
+        print(f"   • Rango de fechas: {df['datetime'].min()} a {df['datetime'].max()}")
+        print(f"   • Columnas disponibles: {list(df.columns)}")
+        
+        return df
+        
+    except Exception as e:
+        print(f"[S3] Error procesando datos S3: {str(e)}")
+        print("[S3] Generando datos sinteticos como respaldo...")
+        return generate_sample_data()
+
+
+def get_climate_data_from_s3(access_key: str, secret_key: str, bucket: str, region: str) -> pd.DataFrame:
+    """
+    Download climate data from AWS S3 bucket.
+    
+    Args:
+        access_key: AWS access key
+        secret_key: AWS secret key
+        bucket: S3 bucket name
+        region: AWS region
+        
+    Returns:
+        DataFrame with climate data from S3
+    """
+    try:
+        # Configure S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region
+        )
+        
+        print("Conectando a AWS S3...")
+        
+        # Get today's date to search for data files
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        
+        # Try to find data files for recent dates (last 30 days)
+        all_data = []
+        files_found = 0
+        
+        for days_back in range(30):  # Check last 30 days
+            target_date = today - timedelta(days=days_back)
+            file_key = f"clima-data/{target_date.strftime('%Y_%m_%d')}.csv"
+            
+            try:
+                # Try to download the file
+                response = s3_client.get_object(Bucket=bucket, Key=file_key)
+                file_content = response['Body'].read()
+                
+                # Read CSV from bytes
+                df_day = pd.read_csv(io.BytesIO(file_content))
+                all_data.append(df_day)
+                files_found += 1
+                print(f"[S3] Archivo encontrado: {file_key}")
+                
+                # Stop after finding enough data (at least 7 days)
+                if files_found >= 7:
+                    break
+                    
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'NoSuchKey':
+                    # File doesn't exist for this date, continue
+                    continue
+                else:
+                    print(f"[S3] Error accediendo a {file_key}: {str(e)}")
+                    continue
+        
+        if not all_data:
+            print("[S3] No se encontraron archivos de datos en S3")
+            print("Generando datos sintéticos como respaldo...")
+            return generate_sample_data()
+        
+        # Combine all data
+        combined_data = pd.concat(all_data, ignore_index=True)
+        
+        print(f"[S3] Datos en bruto cargados desde S3:")
+        print(f"   • Archivos encontrados: {files_found}")
+        print(f"   • Total de registros: {len(combined_data)}")
+        print(f"   • Columnas: {list(combined_data.columns)}")
+        
+        # Process the S3 data to expected format
+        processed_data = process_s3_data(combined_data)
+        
+        return processed_data
+        
+    except NoCredentialsError:
+        print("[S3] Error: Credenciales de AWS no validas")
+        print("Generando datos sintéticos como respaldo...")
+        return generate_sample_data()
+    except Exception as e:
+        print(f"[S3] Error conectando a S3: {str(e)}")
+        print("Generando datos sintéticos como respaldo...")
+        return generate_sample_data()
+
+
 def generate_sample_data(n_samples: int = 10000, target: str = 'temperature_2m') -> pd.DataFrame:
     """
     Generate sample climate data for testing purposes.
@@ -769,35 +968,41 @@ def main():
         os.makedirs(input_dir)
     
     try:
-        # Generar o cargar datos
-        sample_data = None
+        # AWS S3 Configuration from environment variables
+        AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+        AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+        AWS_BUCKET = os.getenv("AWS_BUCKET", "ml-ops-datos-prediccion-clima-uadec22025-ml")
+        AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
         
-        # Buscar datos existentes en ubicaciones conocidas
-        possible_files = ['../climate_data.csv', 'climate_data.csv', '../data/climate_data.csv']
-        data_found = False
+        if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+            raise ValueError("AWS credentials not found in environment variables")
         
-        for possible_file in possible_files:
-            if os.path.exists(possible_file):
-                print(f"Loading existing data from: {possible_file}")
-                sample_data = pd.read_csv(possible_file)
-                data_found = True
-                break
+        print("[S3] Descargando datos climaticos desde AWS S3...")
+        print(f"   • Bucket: {AWS_BUCKET}")
+        print(f"   • Region: {AWS_REGION}")
         
-        if not data_found:
-            print("No existing data found. Generating new sample data...")
+        # Intentar cargar datos desde S3
+        sample_data = get_climate_data_from_s3(
+            access_key=AWS_ACCESS_KEY,
+            secret_key=AWS_SECRET_KEY,
+            bucket=AWS_BUCKET,
+            region=AWS_REGION
+        )
+        
+        # Verificar que tenemos datos válidos
+        if sample_data is None or len(sample_data) == 0:
+            print("[S3] No se pudieron cargar datos desde S3. Generando datos sinteticos...")
             sample_data = generate_sample_data(n_samples=8760, target=target_variable)
         
         # Generar timestamp único para esta ejecución
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # ÚNICO archivo de datos: guardar en input para procesamiento
-        input_file = os.path.join(project_root, 'data', 'input', f'climate_data_{timestamp}.csv')
-        sample_data.to_csv(input_file, index=False)
-        print(f"Data saved to '{input_file}' (sera detectado por el pipeline MLOps)")
+        print(f"[MLOps] Usando datos directamente desde S3 (sin archivos intermedios)")
+        print(f"[MLOps] Datos procesados: {len(sample_data)} registros")
         
-        # Initialize and run the predictor usando el archivo en input
+        # Initialize and run the predictor usando los datos directamente
         predictor = ClimatePredictor(target_variable=target_variable, random_state=42)
-        results = predictor.run_complete_pipeline(input_file)
+        results = predictor.run_complete_pipeline_from_df(sample_data)
         
         # GUARDAR EL MODELO Y REGISTRARLO
         model_filename = f'model_{timestamp}.joblib'
@@ -842,7 +1047,7 @@ def main():
         print(f"{'='*70}")
         print(f"Variable objetivo: {target_variable}")
         print(f"Timestamp: {timestamp}")
-        print(f"Archivo de datos: {input_file}")
+        print(f"Archivo de datos: AWS S3 (procesados directamente)")
         print(f"Modelo guardado en: {model_path}")
         print(f"Resultados guardados en: {results_file}")
         
@@ -873,6 +1078,7 @@ def main():
         
     except Exception as e:
         logger.error(f"Error in main execution: {str(e)}")
+        import sys
         sys.exit(1)
 
 

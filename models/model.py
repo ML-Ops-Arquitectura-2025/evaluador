@@ -151,25 +151,25 @@ class ClimatePredictor:
         if get_climate_data_from_api is None:
             raise ImportError("API client not available. Make sure api_client.py is in the parent directory.")
         
-        logger.info(f"🌐 Cargando datos desde Open-Meteo API")
-        logger.info(f"📍 Ubicación: {latitude}°N, {longitude}°E")
+        logger.info(f"Cargando datos desde Open-Meteo API")
+        logger.info(f"Ubicación: {latitude}°N, {longitude}°E")
         
         try:
             # Obtener datos desde la API usando nuestro cliente
             df = get_climate_data_from_api(latitude, longitude)
             
-            logger.info(f"✅ Datos de Open-Meteo cargados exitosamente. Shape: {df.shape}")
-            logger.info(f"📅 Rango temporal: {df['datetime'].min()} a {df['datetime'].max()}")
+            logger.info(f"Datos de Open-Meteo cargados exitosamente. Shape: {df.shape}")
+            logger.info(f"Rango temporal: {df['datetime'].min()} a {df['datetime'].max()}")
             
             # Guardar opcionalmente a archivo
             if save_to_file:
                 df.to_csv(save_to_file, index=False)
-                logger.info(f"💾 Datos guardados en: {save_to_file}")
+                logger.info(f"Datos guardados en: {save_to_file}")
             
             return df
             
         except Exception as e:
-            logger.error(f"❌ Error al cargar datos desde Open-Meteo API: {str(e)}")
+            logger.error(f"Error al cargar datos desde Open-Meteo API: {str(e)}")
             raise
     
     def fetch_and_save_api_data(self, output_path: str, latitude: float = 52.52, longitude: float = 13.41) -> str:
@@ -187,18 +187,18 @@ class ClimatePredictor:
         if save_api_data_to_csv is None:
             raise ImportError("API client not available. Make sure api_client.py is in the parent directory.")
         
-        logger.info(f"📡 Obteniendo y guardando datos de Open-Meteo API en: {output_path}")
-        logger.info(f"📍 Ubicación: {latitude}°N, {longitude}°E")
+        logger.info(f"Obteniendo y guardando datos de Open-Meteo API en: {output_path}")
+        logger.info(f"Ubicación: {latitude}°N, {longitude}°E")
         
         try:
             # Usar la función del cliente API
             saved_path = save_api_data_to_csv(output_path, latitude, longitude)
             
-            logger.info(f"✅ Datos de Open-Meteo API guardados exitosamente en: {saved_path}")
+            logger.info(f"Datos de Open-Meteo API guardados exitosamente en: {saved_path}")
             return saved_path
             
         except Exception as e:
-            logger.error(f"❌ Error al obtener y guardar datos de Open-Meteo API: {str(e)}")
+            logger.error(f"Error al obtener y guardar datos de Open-Meteo API: {str(e)}")
             raise
     
     def create_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:

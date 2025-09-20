@@ -673,12 +673,48 @@ class ClimatePredictor:
             raise
     
     def save_model(self, path: str) -> None:
-        """Save the trained model to specified path."""
+        """Save the trained model to specified path and upload to S3."""
         from joblib import dump
         if self.model is None:
             raise ValueError("No model to save. Train the model first.")
+        
+        # Guardar el modelo localmente
         dump(self.model, path)
         logger.info(f"Model saved to {path}")
+        
+        # Subir el modelo a S3 usando credenciales específicas para joblibs
+        try:
+            # Cargar variables de entorno para S3 (usar credenciales de joblibs si están disponibles)
+            AWS_ACCESS_KEY = os.getenv("AWS_JOBLIB_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY")
+            AWS_SECRET_KEY = os.getenv("AWS_JOBLIB_SECRET_KEY") or os.getenv("AWS_SECRET_KEY")
+            AWS_BUCKET = os.getenv("AWS_JOBLIB_BUCKET") or os.getenv("AWS_BUCKET_OUTPUT")
+            AWS_REGION = os.getenv("AWS_JOBLIB_REGION") or os.getenv("AWS_REGION", "us-east-2")
+            AWS_MODELS_PATH = os.getenv("AWS_MODELS_PATH", "models/")
+            
+            if AWS_ACCESS_KEY and AWS_SECRET_KEY and AWS_BUCKET:
+                # Crear clave S3 para el modelo
+                filename = os.path.basename(path)
+                s3_key = f"{AWS_MODELS_PATH}{filename}"
+                
+                # Subir a S3
+                success = upload_file_to_s3(
+                    file_path=path,
+                    access_key=AWS_ACCESS_KEY,
+                    secret_key=AWS_SECRET_KEY,
+                    bucket=AWS_BUCKET,
+                    region=AWS_REGION,
+                    s3_key=s3_key
+                )
+                
+                if success:
+                    logger.info(f"Model uploaded to S3: s3://{AWS_BUCKET}/{s3_key}")
+                else:
+                    logger.warning(f"Failed to upload model to S3: {path}")
+            else:
+                logger.warning("AWS credentials not found - model saved locally only")
+                
+        except Exception as e:
+            logger.warning(f"Error uploading model to S3: {str(e)} - model saved locally only")
     
     def load_model(self, path: str) -> None:
         """Load a trained model from specified path."""
@@ -686,6 +722,66 @@ class ClimatePredictor:
         self.model = load(path)
         logger.info(f"Model loaded from {path}")
     
+    @staticmethod
+    def upload_existing_models_to_s3(models_directory: str = "models") -> None:
+        """Upload all existing .joblib model files to S3."""
+        import glob
+        
+        # Cargar variables de entorno para S3
+        AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+        AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+        AWS_BUCKET_OUTPUT = os.getenv("AWS_BUCKET_OUTPUT")
+        AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+        
+        if not (AWS_ACCESS_KEY and AWS_SECRET_KEY and AWS_BUCKET_OUTPUT):
+            print("❌ AWS credentials not found - cannot upload models")
+            return
+        
+        # Buscar todos los archivos .joblib en el directorio de modelos
+        pattern = os.path.join(models_directory, "*.joblib")
+        joblib_files = glob.glob(pattern)
+        
+        if not joblib_files:
+            print(f"📁 No .joblib files found in {models_directory}")
+            return
+        
+        print(f"🔄 Found {len(joblib_files)} model files to upload...")
+        
+        successful_uploads = 0
+        failed_uploads = 0
+        
+        for model_path in joblib_files:
+            try:
+                filename = os.path.basename(model_path)
+                s3_key = f"models/{filename}"
+                
+                print(f"⬆️  Uploading: {filename}")
+                
+                success = upload_file_to_s3(
+                    file_path=model_path,
+                    access_key=AWS_ACCESS_KEY,
+                    secret_key=AWS_SECRET_KEY,
+                    bucket=AWS_BUCKET_OUTPUT,
+                    region=AWS_REGION,
+                    s3_key=s3_key
+                )
+                
+                if success:
+                    successful_uploads += 1
+                    print(f"✅ Uploaded: s3://{AWS_BUCKET_OUTPUT}/{s3_key}")
+                else:
+                    failed_uploads += 1
+                    print(f"❌ Failed to upload: {filename}")
+                    
+            except Exception as e:
+                failed_uploads += 1
+                print(f"❌ Error uploading {filename}: {str(e)}")
+        
+        print(f"\n📊 Upload Summary:")
+        print(f"   ✅ Successful: {successful_uploads}")
+        print(f"   ❌ Failed: {failed_uploads}")
+        print(f"   📁 Total: {len(joblib_files)}")
+
     def predict_from_df(self, df: pd.DataFrame) -> np.ndarray:
         """Make predictions on a DataFrame."""
         if self.model is None:
@@ -891,6 +987,58 @@ def get_climate_data_from_s3(access_key: str, secret_key: str, bucket: str, regi
         print(f"[S3] Error conectando a S3: {str(e)}")
         print("Generando datos sintéticos como respaldo...")
         return generate_sample_data()
+
+
+def upload_file_to_s3(file_path: str, access_key: str, secret_key: str, bucket: str, region: str, s3_key: str = None) -> bool:
+    """
+    Upload a file to AWS S3 bucket.
+    
+    Args:
+        file_path: Local path to the file to upload
+        access_key: AWS access key
+        secret_key: AWS secret key
+        bucket: S3 bucket name
+        region: AWS region
+        s3_key: S3 key (path) for the file. If None, uses the filename
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Configure S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region
+        )
+        
+        # Use filename as S3 key if not provided
+        if s3_key is None:
+            s3_key = os.path.basename(file_path)
+        
+        # Upload the file
+        print(f"[S3] Subiendo modelo: {os.path.basename(file_path)}")
+        print(f"[S3] Destino: s3://{bucket}/{s3_key}")
+        
+        s3_client.upload_file(file_path, bucket, s3_key)
+        
+        print(f"[S3] ✅ Modelo subido exitosamente")
+        return True
+        
+    except NoCredentialsError:
+        print("[S3] ❌ Error: Credenciales de AWS no válidas")
+        return False
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            print(f"[S3] ❌ Error: El bucket '{bucket}' no existe")
+        else:
+            print(f"[S3] ❌ Error del cliente AWS: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"[S3] ❌ Error subiendo archivo: {str(e)}")
+        return False
 
 
 def generate_sample_data(n_samples: int = 10000, target: str = 'temperature_2m') -> pd.DataFrame:

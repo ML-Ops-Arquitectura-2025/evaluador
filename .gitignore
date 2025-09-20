@@ -139,6 +139,7 @@ logs/*.log
 # data/output/*.csv
 
 # Models (opcional - comentar si quieres incluir modelos pre-entrenados)
+modes/*.json
 models/*.joblib
 models/temp_*.csv
 

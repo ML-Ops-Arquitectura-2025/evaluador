@@ -1,11 +1,12 @@
 # Configuración principal para el sistema MLOps local de predicción climática
 
-target_variable: temperature_2m  # Cambiar a la variable que usa tu modelo avanzado
+target_variable: snow_probability  # Opciones: snow_probability, rain_probability, temperature_2m
 performance_thresholds:
-  mae: 0.15
+  mae: 0.15  # Para probabilidades: 0.15 significa error del 15%
   r2: 0.75
+  accuracy: 0.80  # Solo para modelos de clasificación (probabilidades)
 monitoring:
   watch_directory: data/output
   check_interval: 300  # segundos
 training:
-  retrain_threshold_mae: 0.08  # Umbral realista para reentrenamiento (permite mejorar gradualmente)
+  retrain_threshold_mae: 0.20  # Para probabilidades: umbral del 20% de error

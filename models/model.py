@@ -18,8 +18,8 @@ Date: September 2025
 
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 import warnings
 import logging
@@ -61,12 +61,12 @@ class ClimatePredictor:
     Supports both temperature and snowfall prediction with automated feature engineering.
     """
     
-    def __init__(self, target_variable: str = 'temperature_2m', random_state: int = None):
+    def __init__(self, target_variable: str = 'snow_probability', random_state: int = None):
         """
         Initialize the ClimatePredictor.
         
         Args:
-            target_variable: The climate variable to predict ('temperature_2m' or 'snowfall')
+            target_variable: The climate variable to predict ('snow_probability', 'rain_probability', or 'temperature_2m')
             random_state: Random state for reproducibility (None for timestamp-based)
         """
         self.target_variable = target_variable
@@ -87,6 +87,12 @@ class ClimatePredictor:
                 'dew_point_2m', 'relative_humidity_2m', 'cloud_cover',
                 'shortwave_radiation', 'wind_speed_10m', 'pressure_msl', 'elevation'
             ]
+        elif target_variable in ['snow_probability', 'rain_probability']:
+            self.base_features = [
+                'temperature_2m', 'dew_point_2m', 'relative_humidity_2m', 'cloud_cover',
+                'shortwave_radiation', 'wind_speed_10m', 'pressure_msl', 'elevation',
+                'precipitation', 'snowfall'
+            ]
         elif target_variable == 'snowfall':
             self.base_features = [
                 'temperature_2m', 'dew_point_2m', 'relative_humidity_2m', 'cloud_cover',
@@ -94,7 +100,7 @@ class ClimatePredictor:
                 'precipitation', 'snow_depth', 'freezing_level_height'
             ]
         else:
-            raise ValueError(f"Unsupported target variable: {target_variable}")
+            raise ValueError(f"Unsupported target variable: {target_variable}. Use 'snow_probability', 'rain_probability', or 'temperature_2m'")
     
     def load_data(self, file_path: str) -> pd.DataFrame:
         """
@@ -205,6 +211,92 @@ class ClimatePredictor:
         except Exception as e:
             logger.error(f"Error al obtener y guardar datos de Open-Meteo API: {str(e)}")
             raise
+    
+    def create_probability_targets(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create probability targets for snow and rain based on meteorological conditions.
+        
+        Args:
+            df: Input DataFrame with meteorological data
+            
+        Returns:
+            DataFrame with added probability columns
+        """
+        df = df.copy()
+        
+        # Crear probabilidad de nieve basada en condiciones meteorológicas
+        if 'snow_probability' not in df.columns:
+            # Condiciones para nieve: temp baja, alta humedad, precipitación
+            temp_condition = (df['temperature_2m'] <= 4.0).astype(float)  # Temp <= 4°C (más amplio)
+            humidity_condition = (df['relative_humidity_2m'] >= 75).astype(float)  # Humedad >= 75%
+            
+            # Si tenemos datos de precipitación y snowfall
+            if 'precipitation' in df.columns and 'snowfall' in df.columns:
+                precip_condition = (df['precipitation'] > 0).astype(float)  # Hay precipitación
+                snow_condition = (df['snowfall'] > 0).astype(float)  # Hay snowfall registrado
+                
+                # Probabilidad de nieve: combinación de factores
+                df['snow_probability'] = (
+                    0.4 * temp_condition +  # 40% peso a temperatura
+                    0.3 * humidity_condition +  # 30% peso a humedad
+                    0.2 * precip_condition +  # 20% peso a precipitación
+                    0.1 * snow_condition  # 10% peso a snowfall real
+                ).clip(0, 1)
+            else:
+                # Sin datos de precipitación, usar temp, humedad y otros factores
+                cloud_condition = (df['cloud_cover'] >= 60).astype(float) if 'cloud_cover' in df.columns else 0
+                pressure_condition = (df['pressure_msl'] <= 1015).astype(float) if 'pressure_msl' in df.columns else 0
+                
+                # Hacer más probabilística: añadir algo de aleatoriedad controlada
+                base_prob = (
+                    0.5 * temp_condition +  # 50% peso a temperatura
+                    0.3 * humidity_condition +  # 30% peso a humedad
+                    0.15 * cloud_condition +  # 15% peso a nubosidad
+                    0.05 * pressure_condition  # 5% peso a presión baja
+                )
+                
+                # Añadir variabilidad estacional (más probable en invierno)
+                if 'datetime' in df.columns:
+                    month = pd.to_datetime(df['datetime']).dt.month
+                    winter_boost = ((month <= 3) | (month >= 11)).astype(float) * 0.2
+                    base_prob = base_prob + winter_boost
+                
+                # Añadir un poco de ruido para crear variabilidad
+                np.random.seed(42)  # Reproducible
+                noise = np.random.normal(0, 0.1, len(df))
+                
+                df['snow_probability'] = (base_prob + noise).clip(0, 1)
+        
+        # Crear probabilidad de lluvia basada en condiciones meteorológicas
+        if 'rain_probability' not in df.columns:
+            # Condiciones para lluvia: temp moderada, alta humedad, precipitación
+            temp_condition = ((df['temperature_2m'] > 2.0) & (df['temperature_2m'] <= 35.0)).astype(float)
+            humidity_condition = (df['relative_humidity_2m'] >= 70).astype(float)
+            
+            if 'precipitation' in df.columns:
+                precip_condition = (df['precipitation'] > 0).astype(float)
+                no_snow_condition = (df['snowfall'] == 0).astype(float) if 'snowfall' in df.columns else 1.0
+                
+                df['rain_probability'] = (
+                    0.3 * temp_condition +  # 30% peso a temperatura
+                    0.3 * humidity_condition +  # 30% peso a humedad
+                    0.3 * precip_condition +  # 30% peso a precipitación
+                    0.1 * no_snow_condition  # 10% peso a no-nieve
+                ).clip(0, 1)
+            else:
+                cloud_condition = (df['cloud_cover'] >= 60).astype(float) if 'cloud_cover' in df.columns else 0
+                pressure_condition = (df['pressure_msl'] <= 1015).astype(float) if 'pressure_msl' in df.columns else 0
+                
+                df['rain_probability'] = (
+                    0.4 * temp_condition +  # 40% peso a temperatura
+                    0.4 * humidity_condition +  # 40% peso a humedad
+                    0.15 * cloud_condition +  # 15% peso a nubosidad
+                    0.05 * pressure_condition  # 5% peso a presión
+                ).clip(0, 1)
+        
+        logger.info(f"Creadas variables objetivo de probabilidad: snow_probability (avg: {df['snow_probability'].mean():.3f}), rain_probability (avg: {df['rain_probability'].mean():.3f})")
+        
+        return df
     
     def create_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -362,6 +454,10 @@ class ClimatePredictor:
         """
         logger.info("Starting feature engineering pipeline")
         
+        # Create probability targets if needed
+        if self.target_variable in ['snow_probability', 'rain_probability']:
+            df = self.create_probability_targets(df)
+        
         # Create temporal features
         df = self.create_temporal_features(df)
         
@@ -501,20 +597,41 @@ class ClimatePredictor:
         # Vary min_samples_split (2-5)
         min_samples_split_varied = random.randint(2, 5)
         
-        # Initialize model with varied hyperparameters
-        self.model = RandomForestRegressor(
-            n_estimators=n_estimators_varied,
-            random_state=self.random_state,
-            n_jobs=-1,  # Use all available cores
-            max_depth=max_depth_varied,
-            min_samples_split=min_samples_split_varied,
-            min_samples_leaf=1
-        )
-        
-        logger.info(f"Model config: n_estimators={n_estimators_varied}, max_depth={max_depth_varied}, min_samples_split={min_samples_split_varied}")
-        
-        # Train the model
-        self.model.fit(X_train, y_train)
+        # Initialize model based on target variable type
+        if self.target_variable in ['snow_probability', 'rain_probability']:
+            # Para probabilidades, convertimos a clases binarias y usamos probabilidades
+            y_binary = (y_train >= 0.5).astype(int)  # Umbral de 50% para clasificación
+            
+            self.model = RandomForestClassifier(
+                n_estimators=n_estimators_varied,
+                random_state=self.random_state,
+                n_jobs=-1,  # Use all available cores
+                max_depth=max_depth_varied,
+                min_samples_split=min_samples_split_varied,
+                min_samples_leaf=1
+            )
+            
+            logger.info(f"Using RandomForestClassifier for {self.target_variable}")
+            logger.info(f"Model config: n_estimators={n_estimators_varied}, max_depth={max_depth_varied}, min_samples_split={min_samples_split_varied}")
+            
+            # Train the classifier
+            self.model.fit(X_train, y_binary)
+        else:
+            # Para regresión (temperatura)
+            self.model = RandomForestRegressor(
+                n_estimators=n_estimators_varied,
+                random_state=self.random_state,
+                n_jobs=-1,  # Use all available cores
+                max_depth=max_depth_varied,
+                min_samples_split=min_samples_split_varied,
+                min_samples_leaf=1
+            )
+            
+            logger.info(f"Using RandomForestRegressor for {self.target_variable}")
+            logger.info(f"Model config: n_estimators={n_estimators_varied}, max_depth={max_depth_varied}, min_samples_split={min_samples_split_varied}")
+            
+            # Train the regressor
+            self.model.fit(X_train, y_train)
         
         logger.info("Model training completed")
     
@@ -534,20 +651,74 @@ class ClimatePredictor:
         if self.model is None:
             raise ValueError("Model not trained yet. Call train_model first.")
         
-        # Make predictions
-        y_pred = self.model.predict(X_test)
-        
-        # Calculate metrics
-        mae = mean_absolute_error(y_test, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-        r2 = r2_score(y_test, y_pred)
-        
-        # Store metrics
-        self.model_metrics = {
-            'mae': mae,
-            'rmse': rmse,
-            'r2': r2
-        }
+        # Make predictions based on model type
+        if self.target_variable in ['snow_probability', 'rain_probability']:
+            # Para clasificación, manejar casos donde solo hay una clase
+            try:
+                y_pred_proba = self.model.predict_proba(X_test)
+                
+                # Si solo hay una clase, crear predicciones artificiales
+                if y_pred_proba.shape[1] == 1:
+                    # Solo una clase presente, usar predicciones binarias
+                    y_pred_binary = self.model.predict(X_test)
+                    y_pred_proba_pos = y_pred_binary.astype(float)
+                    logger.warning(f"Only one class found for {self.target_variable}. Using binary predictions.")
+                else:
+                    y_pred_proba_pos = y_pred_proba[:, 1]  # Probabilidad de clase positiva
+                    y_pred_binary = self.model.predict(X_test)
+                
+            except Exception as e:
+                logger.warning(f"Error with probability predictions: {e}. Using binary predictions only.")
+                y_pred_binary = self.model.predict(X_test)
+                y_pred_proba_pos = y_pred_binary.astype(float)
+                
+            # Convertir y_test a binario para métricas
+            y_test_binary = (y_test >= 0.5).astype(int)
+            
+            # Calcular métricas de clasificación
+            accuracy = accuracy_score(y_test_binary, y_pred_binary)
+            
+            # Calcular MAE usando las probabilidades continuas vs valores originales
+            mae = mean_absolute_error(y_test, y_pred_proba_pos)
+            rmse = np.sqrt(mean_squared_error(y_test, y_pred_proba_pos))
+            
+            # R² puede ser problemático con valores muy pequeños
+            try:
+                r2 = r2_score(y_test, y_pred_proba_pos)
+            except:
+                r2 = 0.0  # Default si hay problemas
+            
+            # Métricas específicas de clasificación
+            self.model_metrics = {
+                'mae': mae,
+                'rmse': rmse,
+                'r2': r2,
+                'accuracy': accuracy,
+                'model_type': 'classification',
+                'avg_true_probability': float(y_test.mean()),
+                'avg_pred_probability': float(y_pred_proba_pos.mean())
+            }
+            
+            logger.info(f"Classification metrics - Accuracy: {accuracy:.4f}, MAE: {mae:.4f}")
+            logger.info(f"Avg true prob: {y_test.mean():.4f}, Avg pred prob: {y_pred_proba_pos.mean():.4f}")
+        else:
+            # Para regresión (temperatura)
+            y_pred = self.model.predict(X_test)
+            
+            # Calculate metrics
+            mae = mean_absolute_error(y_test, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+            r2 = r2_score(y_test, y_pred)
+            
+            # Store metrics
+            self.model_metrics = {
+                'mae': mae,
+                'rmse': rmse,
+                'r2': r2,
+                'model_type': 'regression'
+            }
+            
+            logger.info(f"Regression metrics - MAE: {mae:.4f}, R²: {r2:.4f}")
         
         return self.model_metrics
     
@@ -1127,7 +1298,7 @@ def main():
     print("=" * 60)
     
     # Configuration
-    target_variable = 'temperature_2m'  # Change to 'snowfall' for snow prediction
+    target_variable = 'snow_probability'  # Opciones: 'snow_probability', 'rain_probability', 'temperature_2m'
     
     # Directorio de salida para MLOps pipeline (ruta absoluta) - ÚNICO LUGAR de salida
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

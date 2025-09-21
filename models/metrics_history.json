@@ -350,5 +350,29 @@
       "rmse": 0.2291782915847299,
       "r2": 0.9966478130740586
     }
+  },
+  {
+    "model_path": "models\\model_20250921_125522.joblib",
+    "metrics": {
+      "mae": 0.08028634471603953,
+      "rmse": 0.1106442819543534,
+      "r2": -1.112078679807896,
+      "accuracy": 1.0,
+      "model_type": "classification",
+      "avg_true_probability": 0.08028634471603953,
+      "avg_pred_probability": 0.0
+    }
+  },
+  {
+    "model_path": "models\\model_20250921_134225.joblib",
+    "metrics": {
+      "mae": 0.08000981303457945,
+      "rmse": 0.11032723465559385,
+      "r2": -1.1093559548628638,
+      "accuracy": 1.0,
+      "model_type": "classification",
+      "avg_true_probability": 0.08000981303457945,
+      "avg_pred_probability": 0.0
+    }
   }
 ]

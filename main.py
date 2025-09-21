@@ -43,7 +43,7 @@ def check_s3_for_new_results():
         region = os.getenv('AWS_DEFAULT_REGION', 'us-east-2')
         
         if not access_key or not secret_key:
-            print("⚠️  Credenciales de AWS no configuradas. Usando monitoreo local.")
+            print("Credenciales de AWS no configuradas. Usando monitoreo local.")
             return []
         
         print(f"[S3] Verificando nuevos resultados en s3://{bucket}/results/")
@@ -62,7 +62,7 @@ def check_s3_for_new_results():
         return result_files
         
     except Exception as e:
-        print(f"❌ Error verificando S3: {str(e)}")
+        print(f"Error verificando S3: {str(e)}")
         return []
 
 def process_s3_result_file(s3_file_info, config, model_manager):
@@ -100,10 +100,10 @@ def process_s3_result_file(s3_file_info, config, model_manager):
             print(f"[S3] Archivo temporal eliminado: {local_path}")
             
         else:
-            print(f"❌ Error descargando archivo desde S3: {filename}")
+            print(f"Error descargando archivo desde S3: {filename}")
             
     except Exception as e:
-        print(f"❌ Error procesando archivo S3: {str(e)}")
+        print(f"Error procesando archivo S3: {str(e)}")
 
 def check_for_new_results_s3(config, model_manager, last_checked_files=None):
     """Verifica y procesa nuevos archivos de resultados en S3."""
@@ -665,9 +665,9 @@ def main():
     aws_configured = os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY')
     
     if aws_configured:
-        print("✅ Credenciales AWS configuradas - Usando monitoreo S3 + local")
+        print("Credenciales AWS configuradas - Usando monitoreo S3 + local")
     else:
-        print("⚠️  Credenciales AWS no configuradas - Solo monitoreo local")
+        print("Credenciales AWS no configuradas - Solo monitoreo local")
     
     def callback(csv_path):
         filename = os.path.basename(csv_path)

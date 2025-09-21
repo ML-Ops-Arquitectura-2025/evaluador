@@ -5,6 +5,7 @@ import logging
 import yaml
 import pandas as pd
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
 # Cargar variables de entorno
 load_dotenv()
@@ -13,7 +14,7 @@ load_dotenv()
 models_path = os.path.join(os.path.dirname(__file__), 'models')
 if models_path not in sys.path:
     sys.path.insert(0, models_path)
-from model import ClimatePredictor
+from model import ClimatePredictor, list_s3_files, download_file_from_s3
 from src.model_evaluator import ModelEvaluator
 from src.model_trainer import ModelTrainer
 from src.data_monitor import start_monitoring
@@ -31,6 +32,113 @@ def setup_logging():
             logging.StreamHandler(sys.stdout)  # Agregar salida a consola
         ]
     )
+
+def check_s3_for_new_results():
+    """Verifica si hay nuevos archivos de resultados en S3."""
+    try:
+        # Cargar credenciales de AWS
+        access_key = os.getenv('AWS_ACCESS_KEY_ID')
+        secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        bucket = os.getenv('AWS_BUCKET', 'ml-ops-datos-prediccion-clima-uadec22025-ml')
+        region = os.getenv('AWS_DEFAULT_REGION', 'us-east-2')
+        
+        if not access_key or not secret_key:
+            print("⚠️  Credenciales de AWS no configuradas. Usando monitoreo local.")
+            return []
+        
+        print(f"[S3] Verificando nuevos resultados en s3://{bucket}/results/")
+        
+        # Listar archivos en S3 en la carpeta results/
+        files = list_s3_files(access_key, secret_key, bucket, region, "results/")
+        
+        # Filtrar solo archivos de resultados
+        result_files = [f for f in files if f['Key'].startswith('results/model_results_') and f['Key'].endswith('.csv')]
+        
+        # Ordenar por fecha de modificación (más reciente primero)
+        result_files.sort(key=lambda x: x['LastModified'], reverse=True)
+        
+        print(f"[S3] Encontrados {len(result_files)} archivos de resultados en S3")
+        
+        return result_files
+        
+    except Exception as e:
+        print(f"❌ Error verificando S3: {str(e)}")
+        return []
+
+def process_s3_result_file(s3_file_info, config, model_manager):
+    """Descarga y procesa un archivo de resultados desde S3."""
+    try:
+        # Cargar credenciales de AWS
+        access_key = os.getenv('AWS_ACCESS_KEY_ID')
+        secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        bucket = os.getenv('AWS_BUCKET', 'ml-ops-datos-prediccion-clima-uadec22025-ml')
+        region = os.getenv('AWS_DEFAULT_REGION', 'us-east-2')
+        
+        s3_key = s3_file_info['Key']
+        filename = os.path.basename(s3_key)
+        
+        # Crear directorio temporal para descargas
+        temp_dir = os.path.join(os.path.dirname(__file__), 'temp')
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+        
+        local_path = os.path.join(temp_dir, filename)
+        
+        print(f"[S3] Descargando archivo de resultados: {filename}")
+        
+        # Descargar archivo desde S3
+        success = download_file_from_s3(access_key, secret_key, bucket, region, s3_key, local_path)
+        
+        if success and os.path.exists(local_path):
+            print(f"[S3] Archivo descargado exitosamente: {local_path}")
+            
+            # Procesar el archivo de resultados
+            process_model_results(local_path, config, model_manager)
+            
+            # Limpiar archivo temporal
+            os.remove(local_path)
+            print(f"[S3] Archivo temporal eliminado: {local_path}")
+            
+        else:
+            print(f"❌ Error descargando archivo desde S3: {filename}")
+            
+    except Exception as e:
+        print(f"❌ Error procesando archivo S3: {str(e)}")
+
+def check_for_new_results_s3(config, model_manager, last_checked_files=None):
+    """Verifica y procesa nuevos archivos de resultados en S3."""
+    if last_checked_files is None:
+        last_checked_files = set()
+    
+    # Obtener archivos de resultados de S3
+    s3_files = check_s3_for_new_results()
+    
+    if not s3_files:
+        print("[S3] No se encontraron archivos de resultados en S3")
+        return last_checked_files
+    
+    # Verificar si hay archivos nuevos
+    current_files = {f['Key'] for f in s3_files}
+    new_files = current_files - last_checked_files
+    
+    if new_files:
+        print(f"[S3] Encontrados {len(new_files)} archivos nuevos de resultados")
+        
+        # Procesar solo los archivos más recientes (límite de 3)
+        new_s3_files = [f for f in s3_files if f['Key'] in new_files]
+        new_s3_files.sort(key=lambda x: x['LastModified'], reverse=True)
+        
+        for file_info in new_s3_files[:3]:  # Procesar máximo 3 archivos más recientes
+            print(f"\n{'='*60}")
+            print(f"PROCESANDO RESULTADO DESDE S3: {os.path.basename(file_info['Key'])}")
+            print(f"Fecha S3: {file_info['LastModified']}")
+            print(f"{'='*60}")
+            
+            process_s3_result_file(file_info, config, model_manager)
+    else:
+        print("[S3] No hay archivos nuevos de resultados")
+    
+    return current_files
 
 def process_model_results(results_csv_path, config, model_manager):
     """Procesa archivos de resultados del modelo para evaluación y reentrenamiento automático."""
@@ -537,7 +645,7 @@ def main():
         config = yaml.safe_load(f)
     model_manager = ModelManager()
     
-    # Usar ruta absoluta para el directorio de monitoreo
+    # Usar ruta absoluta para el directorio de monitoreo local (como respaldo)
     watch_dir = config['monitoring']['watch_directory']
     if not os.path.isabs(watch_dir):
         watch_dir = os.path.join(os.path.dirname(__file__), watch_dir)
@@ -545,31 +653,74 @@ def main():
     
     check_interval = config['monitoring']['check_interval']
     
-    print(f"Carpeta monitoreada: {watch_dir}")
-    print(f"Intervalo de chequeo: {check_interval} segundos")
-    print(f"Variable objetivo: {config['target_variable']}")
-    print(f"Umbral MAE reentrenamiento: {config['training']['retrain_threshold_mae']}")
+    print(f"🌐 Sistema MLOps con monitoreo S3 y local")
+    print(f"📁 Carpeta local (respaldo): {watch_dir}")
+    print(f"☁️  Bucket S3: {os.getenv('AWS_BUCKET', 'ml-ops-datos-prediccion-clima-uadec22025-ml')}")
+    print(f"⏰ Intervalo de chequeo: {check_interval} segundos")
+    print(f"🎯 Variable objetivo: {config['target_variable']}")
+    print(f"📊 Umbral MAE reentrenamiento: {config['training']['retrain_threshold_mae']}")
     print("=" * 60)
+    
+    # Verificar si las credenciales de AWS están configuradas
+    aws_configured = os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY')
+    
+    if aws_configured:
+        print("✅ Credenciales AWS configuradas - Usando monitoreo S3 + local")
+    else:
+        print("⚠️  Credenciales AWS no configuradas - Solo monitoreo local")
     
     def callback(csv_path):
         filename = os.path.basename(csv_path)
         if filename.startswith('model_results_'):
             # Es un archivo de resultados del modelo
-            print(f"[MONITOR] Detectado archivo de resultados: {filename}")
+            print(f"[MONITOR LOCAL] Detectado archivo de resultados: {filename}")
             process_model_results(csv_path, config, model_manager)
         else:
             # Es un archivo de datos para procesamiento
-            print(f"[MONITOR] Detectado archivo de datos: {filename}")
+            print(f"[MONITOR LOCAL] Detectado archivo de datos: {filename}")
             process_new_data(csv_path, config, model_manager)
     
-    logging.info("Sistema MLOps iniciado. Monitoreando carpeta de datos...")
-    print("Sistema iniciado. Monitoreando cambios en archivos...")
-    print("Presiona Ctrl+C para detener...")
+    logging.info("Sistema MLOps iniciado. Monitoreando S3 y carpeta local...")
+    print("🚀 Sistema iniciado. Monitoreando cambios en S3 y archivos locales...")
+    print("🛑 Presiona Ctrl+C para detener...")
+    
+    # Variables para el monitoreo
+    last_checked_s3_files = set()
     
     try:
-        start_monitoring(watch_dir, callback, check_interval)
+        # Bucle principal de monitoreo
+        while True:
+            try:
+                # 1. Verificar archivos nuevos en S3 (si está configurado)
+                if aws_configured:
+                    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🔍 Verificando S3 para nuevos resultados...")
+                    last_checked_s3_files = check_for_new_results_s3(config, model_manager, last_checked_s3_files)
+                
+                # 2. Verificar archivos locales (respaldo)
+                if os.path.exists(watch_dir):
+                    local_files = [f for f in os.listdir(watch_dir) if f.endswith('.csv')]
+                    if local_files:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] 📁 Verificando {len(local_files)} archivos locales...")
+                        for file in local_files:
+                            full_path = os.path.join(watch_dir, file)
+                            if os.path.getmtime(full_path) > time.time() - check_interval:
+                                print(f"[MONITOR LOCAL] Archivo reciente detectado: {file}")
+                                callback(full_path)
+                
+                # 3. Pausa antes del siguiente ciclo
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 💤 Esperando {check_interval} segundos...")
+                time.sleep(check_interval)
+                
+            except Exception as e:
+                print(f"❌ Error en ciclo de monitoreo: {str(e)}")
+                time.sleep(check_interval)
+                continue
+                
     except KeyboardInterrupt:
-        print("\nMonitoreo detenido por el usuario.")
+        print("\n🛑 Monitoreo detenido por el usuario.")
+        print("📊 Resumen de la sesión:")
+        print(f"   • Archivos S3 procesados: {len(last_checked_s3_files)}")
+        print("   • Sistema MLOps detenido correctamente")
 
 if __name__ == '__main__':
     main()

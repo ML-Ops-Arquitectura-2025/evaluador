@@ -1237,6 +1237,97 @@ def upload_file_to_s3(file_path: str, access_key: str, secret_key: str, bucket: 
         return False
 
 
+def list_s3_files(access_key: str, secret_key: str, bucket: str, region: str, prefix: str = "") -> list:
+    """
+    List files in an S3 bucket with optional prefix.
+    
+    Args:
+        access_key: AWS access key
+        secret_key: AWS secret key
+        bucket: S3 bucket name
+        region: AWS region
+        prefix: S3 prefix/folder to filter files
+        
+    Returns:
+        List of dictionaries with file information (Key, LastModified, Size)
+    """
+    try:
+        # Configure S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region
+        )
+        
+        # List objects with prefix
+        response = s3_client.list_objects_v2(
+            Bucket=bucket,
+            Prefix=prefix
+        )
+        
+        files = []
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                files.append({
+                    'Key': obj['Key'],
+                    'LastModified': obj['LastModified'],
+                    'Size': obj['Size']
+                })
+                
+        return files
+        
+    except NoCredentialsError:
+        print("[S3] [ERROR] Credenciales de AWS no validas")
+        return []
+    except ClientError as e:
+        print(f"[S3] [ERROR] Error listando archivos: {str(e)}")
+        return []
+    except Exception as e:
+        print(f"[S3] [ERROR] Error listando archivos: {str(e)}")
+        return []
+
+
+def download_file_from_s3(access_key: str, secret_key: str, bucket: str, region: str, s3_key: str, local_path: str) -> bool:
+    """
+    Download a file from S3 to local path.
+    
+    Args:
+        access_key: AWS access key
+        secret_key: AWS secret key
+        bucket: S3 bucket name
+        region: AWS region
+        s3_key: S3 key (path) of the file to download
+        local_path: Local path where to save the file
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Configure S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region
+        )
+        
+        print(f"[S3] Descargando: {s3_key} -> {local_path}")
+        s3_client.download_file(bucket, s3_key, local_path)
+        print(f"[S3] [OK] Archivo descargado exitosamente")
+        return True
+        
+    except NoCredentialsError:
+        print("[S3] [ERROR] Credenciales de AWS no validas")
+        return False
+    except ClientError as e:
+        print(f"[S3] [ERROR] Error descargando archivo: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"[S3] [ERROR] Error descargando archivo: {str(e)}")
+        return False
+
+
 def generate_sample_data(n_samples: int = 10000, target: str = 'temperature_2m') -> pd.DataFrame:
     """
     Generate sample climate data for testing purposes.

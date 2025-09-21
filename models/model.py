@@ -1023,21 +1023,21 @@ def upload_file_to_s3(file_path: str, access_key: str, secret_key: str, bucket: 
         
         s3_client.upload_file(file_path, bucket, s3_key)
         
-        print(f"[S3] ✅ Modelo subido exitosamente")
+        print(f"[S3] [OK] Modelo subido exitosamente")
         return True
         
     except NoCredentialsError:
-        print("[S3] ❌ Error: Credenciales de AWS no válidas")
+        print("[S3] [ERROR] Credenciales de AWS no validas")
         return False
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if error_code == 'NoSuchBucket':
-            print(f"[S3] ❌ Error: El bucket '{bucket}' no existe")
+            print(f"[S3] [ERROR] El bucket '{bucket}' no existe")
         else:
-            print(f"[S3] ❌ Error del cliente AWS: {str(e)}")
+            print(f"[S3] [ERROR] Error del cliente AWS: {str(e)}")
         return False
     except Exception as e:
-        print(f"[S3] ❌ Error subiendo archivo: {str(e)}")
+        print(f"[S3] [ERROR] Error subiendo archivo: {str(e)}")
         return False
 
 
@@ -1188,6 +1188,41 @@ def main():
         
         results_df.to_csv(results_file, index=False)
         print(f"Model results saved to '{results_file}' (sera monitoreado por MLOps)")
+        
+        # Subir resultados a S3 (mismas credenciales que joblibs)
+        try:
+            AWS_ACCESS_KEY = os.getenv("AWS_JOBLIB_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY")
+            AWS_SECRET_KEY = os.getenv("AWS_JOBLIB_SECRET_KEY") or os.getenv("AWS_SECRET_KEY")
+            AWS_BUCKET = os.getenv("AWS_JOBLIB_BUCKET") or os.getenv("AWS_BUCKET")
+            AWS_REGION = os.getenv("AWS_JOBLIB_REGION") or os.getenv("AWS_REGION", "us-east-2")
+            AWS_RESULTS_PATH = os.getenv("AWS_RESULTS_PATH", "results/")
+            
+            if AWS_ACCESS_KEY and AWS_SECRET_KEY and AWS_BUCKET:
+                # Crear clave S3 para el archivo de resultados
+                filename = os.path.basename(results_file)
+                s3_key = f"{AWS_RESULTS_PATH}{filename}"
+                
+                print(f"[S3] Subiendo resultados: {filename}")
+                print(f"[S3] Destino: s3://{AWS_BUCKET}/{s3_key}")
+                
+                success = upload_file_to_s3(
+                    file_path=results_file,
+                    access_key=AWS_ACCESS_KEY,
+                    secret_key=AWS_SECRET_KEY,
+                    bucket=AWS_BUCKET,
+                    region=AWS_REGION,
+                    s3_key=s3_key
+                )
+                
+                if success:
+                    print(f"[S3] [OK] Resultados subidos a S3: s3://{AWS_BUCKET}/{s3_key}")
+                else:
+                    print(f"[S3] [ERROR] No se pudieron subir los resultados a S3")
+            else:
+                print("[S3] [WARNING] Credenciales no disponibles para subir resultados")
+                
+        except Exception as e:
+            print(f"[S3] [ERROR] Error subiendo resultados: {str(e)}")
         
         # MOSTRAR RESUMEN DETALLADO DE RESULTADOS POR CONSOLA
         print(f"\n{'='*70}")

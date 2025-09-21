@@ -617,6 +617,39 @@ def test_automatic_retraining():
     
     return True
 
+def run_single_check():
+    """Ejecuta una sola verificación del sistema sin bucle infinito."""
+    print("=" * 60)
+    print("VERIFICACIÓN ÚNICA DEL SISTEMA MLOps")
+    print("=" * 60)
+    
+    # Cargar configuración
+    with open('config/config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    model_manager = ModelManager()
+    
+    print("1. Verificando archivos nuevos en S3...")
+    last_checked_files = check_for_new_results_s3(config, model_manager, set())
+    
+    print(f"\n2. Archivos procesados: {len(last_checked_files)}")
+    
+    print("\n3. Verificando archivos locales...")
+    watch_dir = config['monitoring']['watch_directory']
+    if not os.path.isabs(watch_dir):
+        watch_dir = os.path.join(os.path.dirname(__file__), watch_dir)
+    watch_dir = os.path.abspath(watch_dir)
+    
+    if os.path.exists(watch_dir):
+        local_files = [f for f in os.listdir(watch_dir) if f.endswith('.csv')]
+        print(f"Archivos locales encontrados: {len(local_files)}")
+    else:
+        print("Directorio local no existe")
+    
+    print("\n=" * 60)
+    print("VERIFICACIÓN COMPLETADA")
+    print("=" * 60)
+    return True
+
 def main():
     """Función principal - inicia directamente el monitoreo automático."""
     setup_logging()
@@ -638,8 +671,11 @@ def main():
     elif len(sys.argv) > 1 and sys.argv[1] == "--test-retrain":
         print("DEBUG: Detectado argumento --test-retrain, probando reentrenamiento automático...")
         return test_automatic_retraining()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--check-once":
+        print("DEBUG: Detectado argumento --check-once, verificando una sola vez...")
+        return run_single_check()
     else:
-        print("DEBUG: No se detectó --run-model, iniciando monitoreo...")
+        print("DEBUG: No se detectó argumento especial, iniciando monitoreo continuo...")
     
     with open('config/config.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -653,7 +689,7 @@ def main():
     
     check_interval = config['monitoring']['check_interval']
     
-    print(f"🌐 Sistema MLOps con monitoreo S3 y local")
+    print(f"Sistema MLOps con monitoreo S3 y local")
     print(f"📁 Carpeta local (respaldo): {watch_dir}")
     print(f"☁️  Bucket S3: {os.getenv('AWS_BUCKET', 'ml-ops-datos-prediccion-clima-uadec22025-ml')}")
     print(f"⏰ Intervalo de chequeo: {check_interval} segundos")

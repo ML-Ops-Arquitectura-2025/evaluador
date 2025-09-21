@@ -7,6 +7,7 @@ performance_thresholds:
   accuracy: 0.80  # Solo para modelos de clasificación (probabilidades)
 monitoring:
   watch_directory: data/output
-  check_interval: 300  # segundos
+  check_interval: 30  # segundos (reducido para testing - era 300)
+  check_interval_s3: 30  # segundos para monitoreo S3
 training:
   retrain_threshold_mae: 0.20  # Para probabilidades: umbral del 20% de error

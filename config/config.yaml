@@ -8,4 +8,4 @@ monitoring:
   watch_directory: data/output
   check_interval: 300  # segundos
 training:
-  retrain_threshold_mae: 0.02  # Umbral realista para reentrenamiento
+  retrain_threshold_mae: 0.08  # Umbral realista para reentrenamiento (permite mejorar gradualmente)

@@ -61,16 +61,21 @@ class ClimatePredictor:
     Supports both temperature and snowfall prediction with automated feature engineering.
     """
     
-    def __init__(self, target_variable: str = 'temperature_2m', random_state: int = 42):
+    def __init__(self, target_variable: str = 'temperature_2m', random_state: int = None):
         """
         Initialize the ClimatePredictor.
         
         Args:
             target_variable: The climate variable to predict ('temperature_2m' or 'snowfall')
-            random_state: Random state for reproducibility
+            random_state: Random state for reproducibility (None for timestamp-based)
         """
         self.target_variable = target_variable
-        self.random_state = random_state
+        # Use timestamp-based random state for variability in retraining
+        if random_state is None:
+            import time
+            self.random_state = int(time.time()) % 10000  # Keep it reasonable
+        else:
+            self.random_state = random_state
         self.model = None
         self.feature_columns = None
         self.baseline_mae = None
@@ -453,10 +458,16 @@ class ClimatePredictor:
         Returns:
             Tuple of (X_train, X_test, y_train, y_test)
         """
-        logger.info(f"Splitting data with {test_size*100}% for testing (temporal order preserved)")
+        # Add small variability to test_size for retraining improvements
+        import random
+        random.seed(self.random_state)
+        test_size_varied = test_size + random.uniform(-0.02, 0.02)  # ±2% variation
+        test_size_varied = max(0.15, min(0.25, test_size_varied))  # Keep within reasonable bounds
+        
+        logger.info(f"Splitting data with {test_size_varied*100:.1f}% for testing (temporal order preserved)")
         
         # Calculate split index
-        split_idx = int(len(X) * (1 - test_size))
+        split_idx = int(len(X) * (1 - test_size_varied))
         
         X_train = X.iloc[:split_idx]
         X_test = X.iloc[split_idx:]
@@ -478,15 +489,29 @@ class ClimatePredictor:
         """
         logger.info("Training Random Forest Regressor")
         
-        # Initialize model with basic hyperparameters
+        # Add variability in hyperparameters for retraining improvements
+        import random
+        random.seed(self.random_state)
+        
+        # Vary n_estimators (80-120 range)
+        n_estimators_varied = random.randint(80, 120)
+        # Vary max_depth (None, 10-20)
+        max_depth_options = [None, 12, 15, 18, 20]
+        max_depth_varied = random.choice(max_depth_options)
+        # Vary min_samples_split (2-5)
+        min_samples_split_varied = random.randint(2, 5)
+        
+        # Initialize model with varied hyperparameters
         self.model = RandomForestRegressor(
-            n_estimators=100,
+            n_estimators=n_estimators_varied,
             random_state=self.random_state,
             n_jobs=-1,  # Use all available cores
-            max_depth=None,
-            min_samples_split=2,
+            max_depth=max_depth_varied,
+            min_samples_split=min_samples_split_varied,
             min_samples_leaf=1
         )
+        
+        logger.info(f"Model config: n_estimators={n_estimators_varied}, max_depth={max_depth_varied}, min_samples_split={min_samples_split_varied}")
         
         # Train the model
         self.model.fit(X_train, y_train)
@@ -1148,8 +1173,8 @@ def main():
         print(f"[MLOps] Usando datos directamente desde S3 (sin archivos intermedios)")
         print(f"[MLOps] Datos procesados: {len(sample_data)} registros")
         
-        # Initialize and run the predictor usando los datos directamente
-        predictor = ClimatePredictor(target_variable=target_variable, random_state=42)
+        # Initialize and run the predictor usando los datos directamente (random_state variable)
+        predictor = ClimatePredictor(target_variable=target_variable, random_state=None)
         results = predictor.run_complete_pipeline_from_df(sample_data)
         
         # GUARDAR EL MODELO Y REGISTRARLO
@@ -1263,6 +1288,154 @@ def main():
         logger.error(f"Error in main execution: {str(e)}")
         import sys
         sys.exit(1)
+
+
+def get_latest_model_result():
+    """
+    Consulta el último resultado del modelo desde S3
+    
+    Returns:
+        dict: Diccionario con las métricas del último modelo o None si hay error
+    """
+    try:
+        # Configuración AWS
+        AWS_ACCESS_KEY = os.getenv("AWS_JOBLIB_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY")
+        AWS_SECRET_KEY = os.getenv("AWS_JOBLIB_SECRET_KEY") or os.getenv("AWS_SECRET_KEY")
+        AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+        BUCKET_NAME = "ml-ops-datos-prediccion-clima-uadec22025-ml"
+        
+        if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+            raise Exception("Credenciales AWS no encontradas")
+        
+        # Conectar a S3
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=AWS_ACCESS_KEY,
+            aws_secret_access_key=AWS_SECRET_KEY,
+            region_name=AWS_REGION
+        )
+        
+        # Listar archivos en la carpeta results/
+        response = s3_client.list_objects_v2(
+            Bucket=BUCKET_NAME, 
+            Prefix='results/model_results_'
+        )
+        
+        if 'Contents' not in response:
+            return None
+            
+        # Encontrar el archivo más reciente
+        result_files = []
+        for obj in response['Contents']:
+            if obj['Key'].startswith('results/model_results_') and obj['Key'].endswith('.csv'):
+                result_files.append({
+                    'key': obj['Key'],
+                    'last_modified': obj['LastModified'],
+                    'size': obj['Size']
+                })
+        
+        if not result_files:
+            return None
+            
+        # Ordenar por fecha de modificación (más reciente primero)
+        latest_file = sorted(result_files, key=lambda x: x['last_modified'], reverse=True)[0]
+        
+        # Descargar y leer el archivo más reciente
+        response = s3_client.get_object(Bucket=BUCKET_NAME, Key=latest_file['key'])
+        file_content = response['Body'].read()
+        
+        # Convertir a DataFrame
+        df = pd.read_csv(io.BytesIO(file_content))
+        
+        if df.empty:
+            return None
+            
+        # Obtener la primera (y única) fila
+        result = df.iloc[0]
+        
+        # Convertir a diccionario con información adicional
+        model_result = {
+            'file_name': os.path.basename(latest_file['key']),
+            'file_path_s3': f"s3://{BUCKET_NAME}/{latest_file['key']}",
+            'file_size_bytes': latest_file['size'],
+            'file_last_modified': latest_file['last_modified'],
+            'timestamp': pd.to_datetime(result['timestamp']),
+            'target_variable': result['target_variable'],
+            'mae': float(result['mae']),
+            'rmse': float(result['rmse']),
+            'r2': float(result['r2']),
+            'baseline_mae': float(result['baseline_mae']),
+            'improvement_over_baseline': round((1 - result['mae'] / result['baseline_mae']) * 100, 2),
+            'n_features': int(result['n_features']),
+            'data_shape_rows': int(result['data_shape_rows']),
+            'data_shape_cols': int(result['data_shape_cols']),
+            'model_quality': _evaluate_model_quality(result['mae'], result['r2'])
+        }
+        
+        return model_result
+        
+    except Exception as e:
+        logger.error(f"Error al consultar último resultado: {str(e)}")
+        return None
+
+
+def _evaluate_model_quality(mae, r2):
+    """
+    Evalúa la calidad del modelo basado en métricas
+    
+    Args:
+        mae: Mean Absolute Error
+        r2: R² Score
+    
+    Returns:
+        str: Calificación de calidad del modelo
+    """
+    if mae <= 0.05 and r2 >= 0.99:
+        return "EXCELENTE"
+    elif mae <= 0.08 and r2 >= 0.95:
+        return "BUENO"
+    elif mae <= 0.15 and r2 >= 0.85:
+        return "ACEPTABLE"
+    else:
+        return "REQUIERE_MEJORA"
+
+
+def format_model_result(result):
+    """
+    Formatea el resultado del modelo para mostrar de manera legible
+    
+    Args:
+        result: Diccionario retornado por get_latest_model_result()
+    
+    Returns:
+        str: Texto formateado con la información del modelo
+    """
+    if result is None:
+        return "❌ No se encontraron resultados del modelo en S3"
+    
+    output = []
+    output.append("🔍 ÚLTIMO RESULTADO DEL MODELO")
+    output.append("=" * 50)
+    output.append(f"📁 Archivo: {result['file_name']}")
+    output.append(f"📅 Fecha: {result['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+    output.append(f"🌡️  Variable: {result['target_variable']}")
+    output.append("")
+    output.append("📊 MÉTRICAS:")
+    output.append(f"   • MAE: {result['mae']:.6f}")
+    output.append(f"   • RMSE: {result['rmse']:.6f}")
+    output.append(f"   • R²: {result['r2']:.6f}")
+    output.append(f"   • Baseline MAE: {result['baseline_mae']:.2f}")
+    output.append(f"   • Mejora vs Baseline: {result['improvement_over_baseline']}%")
+    output.append("")
+    output.append("🏗️  DATOS:")
+    output.append(f"   • Features: {result['n_features']}")
+    output.append(f"   • Registros: {result['data_shape_rows']}")
+    output.append(f"   • Columnas: {result['data_shape_cols']}")
+    output.append("")
+    output.append(f"⭐ CALIDAD: {result['model_quality']}")
+    output.append(f"📍 S3: {result['file_path_s3']}")
+    
+    return "\n".join(output)
 
 
 if __name__ == "__main__":

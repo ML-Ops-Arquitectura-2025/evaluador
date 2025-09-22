@@ -84,20 +84,20 @@ class ClimatePredictor:
         # Define variables for feature engineering based on target
         if target_variable == 'temperature_2m':
             self.base_features = [
-                'dew_point_2m', 'relative_humidity_2m', 'cloud_cover',
-                'shortwave_radiation', 'wind_speed_10m', 'pressure_msl', 'elevation'
+                'dew_point_2m (°C)', 'relative_humidity_2m (%)', 'cloudcover (%)',
+                'shortwave_radiation (W/m²)', 'wind_speed_10m (km/h)', 'pressure_msl (hPa)'
             ]
         elif target_variable in ['snow_probability', 'rain_probability']:
             self.base_features = [
-                'temperature_2m', 'dew_point_2m', 'relative_humidity_2m', 'cloud_cover',
-                'shortwave_radiation', 'wind_speed_10m', 'pressure_msl', 'elevation',
-                'precipitation', 'snowfall'
+                'temperature_2m (°C)', 'dew_point_2m (°C)', 'relative_humidity_2m (%)', 'cloudcover (%)',
+                'shortwave_radiation (W/m²)', 'wind_speed_10m (km/h)', 'pressure_msl (hPa)',
+                'precipitation (mm)', 'snowfall (cm)'
             ]
         elif target_variable == 'snowfall':
             self.base_features = [
-                'temperature_2m', 'dew_point_2m', 'relative_humidity_2m', 'cloud_cover',
-                'shortwave_radiation', 'wind_speed_10m', 'pressure_msl', 'elevation',
-                'precipitation', 'snow_depth', 'freezing_level_height'
+                'temperature_2m (°C)', 'dew_point_2m (°C)', 'relative_humidity_2m (%)', 'cloudcover (%)',
+                'shortwave_radiation (W/m²)', 'wind_speed_10m (km/h)', 'pressure_msl (hPa)',
+                'precipitation (mm)', 'snow_depth (m)'
             ]
         else:
             raise ValueError(f"Unsupported target variable: {target_variable}. Use 'snow_probability', 'rain_probability', or 'temperature_2m'")
@@ -118,20 +118,51 @@ class ClimatePredictor:
             raise FileNotFoundError(f"Data file not found: {file_path}")
         
         try:
-            df = pd.read_csv(file_path)
+            # Try to read the file normally first
+            try:
+                df = pd.read_csv(file_path)
+            except pd.errors.ParserError:
+                # If parsing fails, try skipping first few lines (metadata)
+                logger.info("Normal CSV parsing failed, trying to skip metadata lines...")
+                df = pd.read_csv(file_path, skiprows=3)  # Skip first 3 lines
+            
             logger.info(f"Data loaded successfully. Shape: {df.shape}")
+            logger.info(f"Columns found: {list(df.columns)}")
             
             # Validate required columns
             required_columns = self.base_features + [self.target_variable]
             missing_columns = [col for col in required_columns if col not in df.columns]
             
             if missing_columns:
-                raise ValueError(f"Missing required columns: {missing_columns}")
+                logger.warning(f"Missing required columns: {missing_columns}")
+                logger.info(f"Available columns: {list(df.columns)}")
+                # Try to find target variable with different naming (e.g., with units)
+                target_variations = [
+                    f"{self.target_variable} (°C)",
+                    f"{self.target_variable} (cm)",
+                    f"{self.target_variable} (mm)", 
+                    f"{self.target_variable} (%)"
+                ]
+                
+                target_found = None
+                for variation in target_variations:
+                    if variation in df.columns:
+                        target_found = variation
+                        logger.info(f"Found target variable with units: {target_found}")
+                        break
+                
+                if not target_found:
+                    raise ValueError(f"Missing required columns: {missing_columns}")
+                    
+                # Update the target variable to the one found
+                self.target_variable = target_found
             
             # Ensure datetime column exists or can be created
             if 'datetime' not in df.columns:
                 if 'date' in df.columns and 'time' in df.columns:
                     df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'])
+                elif 'time' in df.columns:
+                    df['datetime'] = pd.to_datetime(df['time'])
                 else:
                     logger.warning("No datetime column found. Creating index-based datetime.")
                     df['datetime'] = pd.date_range(start='2020-01-01', periods=len(df), freq='H')
@@ -244,8 +275,8 @@ class ClimatePredictor:
                 ).clip(0, 1)
             else:
                 # Sin datos de precipitación, usar temp, humedad y otros factores
-                cloud_condition = (df['cloud_cover'] >= 60).astype(float) if 'cloud_cover' in df.columns else 0
-                pressure_condition = (df['pressure_msl'] <= 1015).astype(float) if 'pressure_msl' in df.columns else 0
+                cloud_condition = (df['cloudcover (%)'] >= 60).astype(float) if 'cloudcover (%)' in df.columns else 0
+                pressure_condition = (df['pressure_msl (hPa)'] <= 1015).astype(float) if 'pressure_msl (hPa)' in df.columns else 0
                 
                 # Hacer más probabilística: añadir algo de aleatoriedad controlada
                 base_prob = (
@@ -284,8 +315,8 @@ class ClimatePredictor:
                     0.1 * no_snow_condition  # 10% peso a no-nieve
                 ).clip(0, 1)
             else:
-                cloud_condition = (df['cloud_cover'] >= 60).astype(float) if 'cloud_cover' in df.columns else 0
-                pressure_condition = (df['pressure_msl'] <= 1015).astype(float) if 'pressure_msl' in df.columns else 0
+                cloud_condition = (df['cloudcover (%)'] >= 60).astype(float) if 'cloudcover (%)' in df.columns else 0
+                pressure_condition = (df['pressure_msl (hPa)'] <= 1015).astype(float) if 'pressure_msl (hPa)' in df.columns else 0
                 
                 df['rain_probability'] = (
                     0.4 * temp_condition +  # 40% peso a temperatura
@@ -423,10 +454,10 @@ class ClimatePredictor:
         
         # Snow-specific features
         if self.target_variable == 'snowfall':
-            if 'temperature_2m' in df.columns and 'freezing_level_height' in df.columns:
-                # Phase rule: likelihood of snow vs rain
-                df['snow_probability'] = np.where(df['temperature_2m'] <= 0, 1.0,
-                                                np.where(df['temperature_2m'] <= 2, 0.5, 0.0))
+            if 'temperature_2m (°C)' in df.columns:
+                # Phase rule: likelihood of snow vs rain based on temperature only
+                df['snow_probability'] = np.where(df['temperature_2m (°C)'] <= 0, 1.0,
+                                                np.where(df['temperature_2m (°C)'] <= 2, 0.5, 0.0))
                 
                 # Freezing level indicator
                 df['below_freezing'] = (df['temperature_2m'] <= 0).astype(int)
@@ -1077,12 +1108,12 @@ def process_s3_data(raw_data: pd.DataFrame) -> pd.DataFrame:
         df = pd.DataFrame(processed_rows)
         
         # Add missing required columns with reasonable defaults
-        df['dew_point_2m'] = df['temperature_2m'] - 5  # Estimate dew point
-        df['relative_humidity_2m'] = 65.0  # Default humidity
-        df['cloud_cover'] = 50.0  # Default cloud cover
-        df['shortwave_radiation'] = 200.0  # Default radiation
-        df['wind_speed_10m'] = 3.0  # Default wind speed
-        df['pressure_msl'] = 1013.25  # Default pressure
+        df['dew_point_2m (°C)'] = df['temperature_2m (°C)'] - 5  # Estimate dew point
+        df['relative_humidity_2m (%)'] = 65.0  # Default humidity
+        df['cloudcover (%)'] = 50.0  # Default cloud cover
+        df['shortwave_radiation (W/m²)'] = 200.0  # Default radiation
+        df['wind_speed_10m (km/h)'] = 3.0  # Default wind speed
+        df['pressure_msl (hPa)'] = 1013.25  # Default pressure
         
         print(f"[S3] Datos procesados exitosamente:")
         print(f"   • Total de registros procesados: {len(df)}")
@@ -1347,36 +1378,34 @@ def generate_sample_data(n_samples: int = 10000, target: str = 'temperature_2m')
     # Base features
     data = {
         'datetime': dates,
-        'temperature_2m': 15 + 10 * np.sin(2 * np.pi * np.arange(n_samples) / (24 * 365)) + \
+        'temperature_2m (°C)': 15 + 10 * np.sin(2 * np.pi * np.arange(n_samples) / (24 * 365)) + \
                          5 * np.sin(2 * np.pi * np.arange(n_samples) / 24) + np.random.normal(0, 2, n_samples),
-        'dew_point_2m': 10 + 8 * np.sin(2 * np.pi * np.arange(n_samples) / (24 * 365)) + \
+        'dew_point_2m (°C)': 10 + 8 * np.sin(2 * np.pi * np.arange(n_samples) / (24 * 365)) + \
                        3 * np.sin(2 * np.pi * np.arange(n_samples) / 24) + np.random.normal(0, 1.5, n_samples),
-        'relative_humidity_2m': 60 + 20 * np.sin(2 * np.pi * np.arange(n_samples) / (24 * 365)) + \
+        'relative_humidity_2m (%)': 60 + 20 * np.sin(2 * np.pi * np.arange(n_samples) / (24 * 365)) + \
                                10 * np.cos(2 * np.pi * np.arange(n_samples) / 24) + np.random.normal(0, 5, n_samples),
-        'cloud_cover': np.random.uniform(0, 100, n_samples),
-        'shortwave_radiation': np.maximum(0, 500 * np.sin(2 * np.pi * np.arange(n_samples) / 24) + 
+        'cloudcover (%)': np.random.uniform(0, 100, n_samples),
+        'shortwave_radiation (W/m²)': np.maximum(0, 500 * np.sin(2 * np.pi * np.arange(n_samples) / 24) + 
                                         np.random.normal(0, 50, n_samples)),
-        'wind_speed_10m': np.random.exponential(5, n_samples),
-        'pressure_msl': 1013 + np.random.normal(0, 20, n_samples),
-        'elevation': 500 + np.random.normal(0, 100, n_samples)
+        'wind_speed_10m (km/h)': np.random.exponential(5, n_samples),
+        'pressure_msl (hPa)': 1013 + np.random.normal(0, 20, n_samples)
     }
     
     if target == 'snowfall':
         # Add snow-specific features
         data.update({
-            'precipitation': np.random.exponential(2, n_samples),
-            'snow_depth': np.maximum(0, np.random.normal(10, 15, n_samples)),
-            'freezing_level_height': 2000 + np.random.normal(0, 500, n_samples),
-            'snowfall': np.maximum(0, np.where(data['temperature_2m'] < 2, 
+            'precipitation (mm)': np.random.exponential(2, n_samples),
+            'snow_depth (m)': np.maximum(0, np.random.normal(0.1, 0.15, n_samples)),
+            'snowfall (cm)': np.maximum(0, np.where(data['temperature_2m (°C)'] < 2, 
                                               np.random.exponential(3, n_samples), 0))
         })
     
     df = pd.DataFrame(data)
     
     # Ensure realistic ranges
-    df['relative_humidity_2m'] = np.clip(df['relative_humidity_2m'], 0, 100)
-    df['cloud_cover'] = np.clip(df['cloud_cover'], 0, 100)
-    df['wind_speed_10m'] = np.clip(df['wind_speed_10m'], 0, 50)
+    df['relative_humidity_2m (%)'] = np.clip(df['relative_humidity_2m (%)'], 0, 100)
+    df['cloudcover (%)'] = np.clip(df['cloudcover (%)'], 0, 100)
+    df['wind_speed_10m (km/h)'] = np.clip(df['wind_speed_10m (km/h)'], 0, 50)
     
     return df
 

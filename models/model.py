@@ -930,7 +930,7 @@ class ClimatePredictor:
         AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
         
         if not (AWS_ACCESS_KEY and AWS_SECRET_KEY and AWS_BUCKET_OUTPUT):
-            print("❌ AWS credentials not found - cannot upload models")
+            print(" AWS credentials not found - cannot upload models")
             return
         
         # Buscar todos los archivos .joblib en el directorio de modelos
@@ -938,10 +938,10 @@ class ClimatePredictor:
         joblib_files = glob.glob(pattern)
         
         if not joblib_files:
-            print(f"📁 No .joblib files found in {models_directory}")
+            print(f" No .joblib files found in {models_directory}")
             return
         
-        print(f"🔄 Found {len(joblib_files)} model files to upload...")
+        print(f" Found {len(joblib_files)} model files to upload...")
         
         successful_uploads = 0
         failed_uploads = 0
@@ -951,7 +951,7 @@ class ClimatePredictor:
                 filename = os.path.basename(model_path)
                 s3_key = f"models/{filename}"
                 
-                print(f"⬆️  Uploading: {filename}")
+                print(f"  Uploading: {filename}")
                 
                 success = upload_file_to_s3(
                     file_path=model_path,
@@ -973,10 +973,10 @@ class ClimatePredictor:
                 failed_uploads += 1
                 print(f"❌ Error uploading {filename}: {str(e)}")
         
-        print(f"\n📊 Upload Summary:")
-        print(f"   ✅ Successful: {successful_uploads}")
-        print(f"   ❌ Failed: {failed_uploads}")
-        print(f"   📁 Total: {len(joblib_files)}")
+        print(f"\n Upload Summary:")
+        print(f"    Successful: {successful_uploads}")
+        print(f"    Failed: {failed_uploads}")
+        print(f"    Total: {len(joblib_files)}")
 
     def predict_from_df(self, df: pd.DataFrame) -> np.ndarray:
         """Make predictions on a DataFrame."""
@@ -1673,29 +1673,29 @@ def format_model_result(result):
         str: Texto formateado con la información del modelo
     """
     if result is None:
-        return "❌ No se encontraron resultados del modelo en S3"
+        return " No se encontraron resultados del modelo en S3"
     
     output = []
-    output.append("🔍 ÚLTIMO RESULTADO DEL MODELO")
+    output.append(" ÚLTIMO RESULTADO DEL MODELO")
     output.append("=" * 50)
-    output.append(f"📁 Archivo: {result['file_name']}")
-    output.append(f"📅 Fecha: {result['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
-    output.append(f"🌡️  Variable: {result['target_variable']}")
+    output.append(f" Archivo: {result['file_name']}")
+    output.append(f" Fecha: {result['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+    output.append(f"  Variable: {result['target_variable']}")
     output.append("")
-    output.append("📊 MÉTRICAS:")
+    output.append(" MÉTRICAS:")
     output.append(f"   • MAE: {result['mae']:.6f}")
     output.append(f"   • RMSE: {result['rmse']:.6f}")
     output.append(f"   • R²: {result['r2']:.6f}")
     output.append(f"   • Baseline MAE: {result['baseline_mae']:.2f}")
     output.append(f"   • Mejora vs Baseline: {result['improvement_over_baseline']}%")
     output.append("")
-    output.append("🏗️  DATOS:")
+    output.append("  DATOS:")
     output.append(f"   • Features: {result['n_features']}")
     output.append(f"   • Registros: {result['data_shape_rows']}")
     output.append(f"   • Columnas: {result['data_shape_cols']}")
     output.append("")
-    output.append(f"⭐ CALIDAD: {result['model_quality']}")
-    output.append(f"📍 S3: {result['file_path_s3']}")
+    output.append(f" CALIDAD: {result['model_quality']}")
+    output.append(f" S3: {result['file_path_s3']}")
     
     return "\n".join(output)
 

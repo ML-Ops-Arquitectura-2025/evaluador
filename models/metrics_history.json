@@ -698,5 +698,53 @@
       "avg_true_probability": 0.08047745819939173,
       "avg_pred_probability": 0.0
     }
+  },
+  {
+    "model_path": "models\\model_20250921_215013.joblib",
+    "metrics": {
+      "mae": 0.08162572924250132,
+      "rmse": 0.11179606716527225,
+      "r2": -1.14174353608034,
+      "accuracy": 1.0,
+      "model_type": "classification",
+      "avg_true_probability": 0.08162572924250132,
+      "avg_pred_probability": 0.0
+    }
+  },
+  {
+    "model_path": "models\\model_20250921_215048.joblib",
+    "metrics": {
+      "mae": 0.08047745819939173,
+      "rmse": 0.11093537799069049,
+      "r2": -1.1109057262270507,
+      "accuracy": 1.0,
+      "model_type": "classification",
+      "avg_true_probability": 0.08047745819939173,
+      "avg_pred_probability": 0.0
+    }
+  },
+  {
+    "model_path": "models\\model_20250921_215054.joblib",
+    "metrics": {
+      "mae": 0.08047745819939173,
+      "rmse": 0.11093537799069049,
+      "r2": -1.1109057262270507,
+      "accuracy": 1.0,
+      "model_type": "classification",
+      "avg_true_probability": 0.08047745819939173,
+      "avg_pred_probability": 0.0
+    }
+  },
+  {
+    "model_path": "models\\model_20250921_215100.joblib",
+    "metrics": {
+      "mae": 0.08047745819939173,
+      "rmse": 0.11093537799069049,
+      "r2": -1.1109057262270507,
+      "accuracy": 1.0,
+      "model_type": "classification",
+      "avg_true_probability": 0.08047745819939173,
+      "avg_pred_probability": 0.0
+    }
   }
 ]

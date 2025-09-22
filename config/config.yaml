@@ -10,4 +10,7 @@ monitoring:
   check_interval: 30  # segundos (reducido para testing - era 300)
   check_interval_s3: 30  # segundos para monitoreo S3
 training:
-  retrain_threshold_mae: 0.20  # Para probabilidades: umbral del 20% de error
+  retrain_threshold_mae: 0.10        # Para probabilidades: umbral del 10% de error
+  retrain_threshold_r2: 0.95         # R² mínimo 95%
+  degradation_threshold: 0.15        # 15% de degradación vs baseline
+  min_improvement_required: 0.02     # Mejora mínima del 2% para validar nuevo modelo

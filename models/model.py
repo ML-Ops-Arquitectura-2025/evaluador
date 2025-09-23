@@ -102,6 +102,40 @@ class ClimatePredictor:
         else:
             raise ValueError(f"Unsupported target variable: {target_variable}. Use 'snow_probability', 'rain_probability', or 'temperature_2m'")
     
+    def _get_column_name(self, base_name: str, df: pd.DataFrame) -> str:
+        """
+        Get the actual column name from the dataframe, handling different naming conventions.
+        
+        Args:
+            base_name: The base column name (e.g., 'temperature_2m')
+            df: The dataframe to search in
+            
+        Returns:
+            The actual column name found in the dataframe
+        """
+        # If the base name exists, use it
+        if base_name in df.columns:
+            return base_name
+            
+        # Try with common unit suffixes
+        variations = [
+            f"{base_name} (°C)",
+            f"{base_name} (cm)", 
+            f"{base_name} (mm)",
+            f"{base_name} (%)",
+            f"{base_name} (W/m²)",
+            f"{base_name} (km/h)",
+            f"{base_name} (hPa)",
+            f"{base_name} (m)"
+        ]
+        
+        for variation in variations:
+            if variation in df.columns:
+                return variation
+                
+        # If no variation found, return the base name (will cause KeyError if used)
+        return base_name
+    
     def load_data(self, file_path: str) -> pd.DataFrame:
         """
         Load and validate the climate dataset.
@@ -257,14 +291,20 @@ class ClimatePredictor:
         
         # Crear probabilidad de nieve basada en condiciones meteorológicas
         if 'snow_probability' not in df.columns:
+            # Get actual column names
+            temp_col = self._get_column_name('temperature_2m', df)
+            humidity_col = self._get_column_name('relative_humidity_2m', df)
+            precip_col = self._get_column_name('precipitation', df)
+            snowfall_col = self._get_column_name('snowfall', df)
+            
             # Condiciones para nieve: temp baja, alta humedad, precipitación
-            temp_condition = (df['temperature_2m'] <= 4.0).astype(float)  # Temp <= 4°C (más amplio)
-            humidity_condition = (df['relative_humidity_2m'] >= 75).astype(float)  # Humedad >= 75%
+            temp_condition = (df[temp_col] <= 4.0).astype(float) if temp_col in df.columns else 0
+            humidity_condition = (df[humidity_col] >= 75).astype(float) if humidity_col in df.columns else 0
             
             # Si tenemos datos de precipitación y snowfall
-            if 'precipitation' in df.columns and 'snowfall' in df.columns:
-                precip_condition = (df['precipitation'] > 0).astype(float)  # Hay precipitación
-                snow_condition = (df['snowfall'] > 0).astype(float)  # Hay snowfall registrado
+            if precip_col in df.columns and snowfall_col in df.columns:
+                precip_condition = (df[precip_col] > 0).astype(float)  # Hay precipitación
+                snow_condition = (df[snowfall_col] > 0).astype(float)  # Hay snowfall registrado
                 
                 # Probabilidad de nieve: combinación de factores
                 df['snow_probability'] = (
@@ -275,8 +315,10 @@ class ClimatePredictor:
                 ).clip(0, 1)
             else:
                 # Sin datos de precipitación, usar temp, humedad y otros factores
-                cloud_condition = (df['cloudcover (%)'] >= 60).astype(float) if 'cloudcover (%)' in df.columns else 0
-                pressure_condition = (df['pressure_msl (hPa)'] <= 1015).astype(float) if 'pressure_msl (hPa)' in df.columns else 0
+                cloud_col = self._get_column_name('cloudcover', df)
+                pressure_col = self._get_column_name('pressure_msl', df)
+                cloud_condition = (df[cloud_col] >= 60).astype(float) if cloud_col in df.columns else 0
+                pressure_condition = (df[pressure_col] <= 1015).astype(float) if pressure_col in df.columns else 0
                 
                 # Hacer más probabilística: añadir algo de aleatoriedad controlada
                 base_prob = (
@@ -300,13 +342,19 @@ class ClimatePredictor:
         
         # Crear probabilidad de lluvia basada en condiciones meteorológicas
         if 'rain_probability' not in df.columns:
-            # Condiciones para lluvia: temp moderada, alta humedad, precipitación
-            temp_condition = ((df['temperature_2m'] > 2.0) & (df['temperature_2m'] <= 35.0)).astype(float)
-            humidity_condition = (df['relative_humidity_2m'] >= 70).astype(float)
+            # Get actual column names  
+            temp_col = self._get_column_name('temperature_2m', df)
+            humidity_col = self._get_column_name('relative_humidity_2m', df)
+            precip_col = self._get_column_name('precipitation', df)
+            snowfall_col = self._get_column_name('snowfall', df)
             
-            if 'precipitation' in df.columns:
-                precip_condition = (df['precipitation'] > 0).astype(float)
-                no_snow_condition = (df['snowfall'] == 0).astype(float) if 'snowfall' in df.columns else 1.0
+            # Condiciones para lluvia: temp moderada, alta humedad, precipitación
+            temp_condition = ((df[temp_col] > 2.0) & (df[temp_col] <= 35.0)).astype(float) if temp_col in df.columns else 0
+            humidity_condition = (df[humidity_col] >= 70).astype(float) if humidity_col in df.columns else 0
+            
+            if precip_col in df.columns:
+                precip_condition = (df[precip_col] > 0).astype(float)
+                no_snow_condition = (df[snowfall_col] == 0).astype(float) if snowfall_col in df.columns else 1.0
                 
                 df['rain_probability'] = (
                     0.3 * temp_condition +  # 30% peso a temperatura
@@ -315,8 +363,10 @@ class ClimatePredictor:
                     0.1 * no_snow_condition  # 10% peso a no-nieve
                 ).clip(0, 1)
             else:
-                cloud_condition = (df['cloudcover (%)'] >= 60).astype(float) if 'cloudcover (%)' in df.columns else 0
-                pressure_condition = (df['pressure_msl (hPa)'] <= 1015).astype(float) if 'pressure_msl (hPa)' in df.columns else 0
+                cloud_col = self._get_column_name('cloudcover', df)
+                pressure_col = self._get_column_name('pressure_msl', df)
+                cloud_condition = (df[cloud_col] >= 60).astype(float) if cloud_col in df.columns else 0
+                pressure_condition = (df[pressure_col] <= 1015).astype(float) if pressure_col in df.columns else 0
                 
                 df['rain_probability'] = (
                     0.4 * temp_condition +  # 40% peso a temperatura
@@ -441,35 +491,42 @@ class ClimatePredictor:
         
         df = df.copy()
         
+        # Get actual column names
+        temp_col = self._get_column_name('temperature_2m', df)
+        dew_col = self._get_column_name('dew_point_2m', df)
+        humidity_col = self._get_column_name('relative_humidity_2m', df)
+        wind_col = self._get_column_name('wind_speed_10m', df)
+        
         # Temperature-based derived features
-        if 'temperature_2m' in df.columns and 'dew_point_2m' in df.columns:
+        if temp_col in df.columns and dew_col in df.columns:
             # Wet-bulb temperature approximation
-            df['wet_bulb_temp'] = df['temperature_2m'] * np.arctan(0.151977 * (df['relative_humidity_2m'] + 8.313659) ** 0.5) + \
-                                  np.arctan(df['temperature_2m'] + df['relative_humidity_2m']) - \
-                                  np.arctan(df['relative_humidity_2m'] - 1.676331) + \
-                                  0.00391838 * (df['relative_humidity_2m'] ** 1.5) * np.arctan(0.023101 * df['relative_humidity_2m']) - 4.686035
+            if humidity_col in df.columns:
+                df['wet_bulb_temp'] = df[temp_col] * np.arctan(0.151977 * (df[humidity_col] + 8.313659) ** 0.5) + \
+                                      np.arctan(df[temp_col] + df[humidity_col]) - \
+                                      np.arctan(df[humidity_col] - 1.676331) + \
+                                      0.00391838 * (df[humidity_col] ** 1.5) * np.arctan(0.023101 * df[humidity_col]) - 4.686035
             
             # Temperature difference
-            df['temp_dewpoint_diff'] = df['temperature_2m'] - df['dew_point_2m']
+            df['temp_dewpoint_diff'] = df[temp_col] - df[dew_col]
         
         # Snow-specific features
         if self.target_variable == 'snowfall':
-            if 'temperature_2m (°C)' in df.columns:
+            if temp_col in df.columns:
                 # Phase rule: likelihood of snow vs rain based on temperature only
-                df['snow_probability'] = np.where(df['temperature_2m (°C)'] <= 0, 1.0,
-                                                np.where(df['temperature_2m (°C)'] <= 2, 0.5, 0.0))
+                df['snow_probability'] = np.where(df[temp_col] <= 0, 1.0,
+                                                np.where(df[temp_col] <= 2, 0.5, 0.0))
                 
                 # Freezing level indicator
-                df['below_freezing'] = (df['temperature_2m'] <= 0).astype(int)
+                df['below_freezing'] = (df[temp_col] <= 0).astype(int)
         
         # Wind chill factor
-        if 'temperature_2m' in df.columns and 'wind_speed_10m' in df.columns:
+        if temp_col in df.columns and wind_col in df.columns:
             # Wind chill calculation (for temperatures <= 10C and wind speed > 4.8 km/h)
-            mask = (df['temperature_2m'] <= 10) & (df['wind_speed_10m'] > 4.8)
-            df['wind_chill'] = df['temperature_2m'].copy()
-            df.loc[mask, 'wind_chill'] = 13.12 + 0.6215 * df.loc[mask, 'temperature_2m'] - \
-                                        11.37 * (df.loc[mask, 'wind_speed_10m'] ** 0.16) + \
-                                        0.3965 * df.loc[mask, 'temperature_2m'] * (df.loc[mask, 'wind_speed_10m'] ** 0.16)
+            mask = (df[temp_col] <= 10) & (df[wind_col] > 4.8)
+            df['wind_chill'] = df[temp_col].copy()
+            df.loc[mask, 'wind_chill'] = 13.12 + 0.6215 * df.loc[mask, temp_col] - \
+                                        11.37 * (df.loc[mask, wind_col] ** 0.16) + \
+                                        0.3965 * df.loc[mask, temp_col] * (df.loc[mask, wind_col] ** 0.16)
         
         return df
     

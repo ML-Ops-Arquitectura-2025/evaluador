@@ -21,3 +21,8 @@ requests==2.32.3
 # Development and Testing (optional)
 pytest==8.3.3
 pytest-cov==5.0.0
+
+uvicorn==0.30.6
+fastapi==0.117.1
+pydantic==2.11.9
+pydantic_core==2.33.2

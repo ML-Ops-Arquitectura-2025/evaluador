@@ -8,7 +8,6 @@ deploy-*.sh
 lambda-package/
 infrastructure.yaml
 docker-compose.yml
-Dockerfile
 *DEPLOYMENT*.md
 *LAMBDA*.md
 QUICKSTART.md

@@ -17,5 +17,7 @@ COPY models /app/models
 COPY query_model_results.py /app/query_model_results.py
 COPY endpoint.py /app/endpoint.py
 
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
+
 EXPOSE 8000
 CMD ["uvicorn", "endpoint:app", "--host", "0.0.0.0", "--port", "8000"]
